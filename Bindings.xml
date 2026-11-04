@@ -1,0 +1,5 @@
+<Bindings>
+    <Binding name="SIMPLESEQUENCE_TOGGLE" header="SIMPLESEQUENCE" category="ADDONS">
+        SimpleSequence.Window:Toggle()
+    </Binding>
+</Bindings>

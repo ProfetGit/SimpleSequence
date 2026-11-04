@@ -1,0 +1,178 @@
+local _, SS = ...
+local Theme = SS.Theme
+local Widgets = SS.Widgets
+local NextUp = {}
+SS.NextUp = NextUp
+
+local SIZE, ICON_INSET = 36, 2
+local MIN_SCALE, MAX_SCALE, SCALE_STEP = 0.6, 2.0, 0.2
+local UNKNOWN_ICON = 134400
+local PULSE_TIME = 0.12
+
+local VALID_POINTS = {
+    CENTER = true, TOP = true, BOTTOM = true, LEFT = true, RIGHT = true,
+    TOPLEFT = true, TOPRIGHT = true, BOTTOMLEFT = true, BOTTOMRIGHT = true,
+}
+
+local frame
+
+local function settings()
+    return SS.db and SS.db.nextUp
+end
+
+local function currentId()
+    return SS.Engine and SS.Engine.lastPressed
+end
+
+local function applyPoint()
+    local saved = settings() and settings().point
+    frame:ClearAllPoints()
+    if type(saved) == "table" and VALID_POINTS[saved[1]] and VALID_POINTS[saved[2]]
+        and type(saved[3]) == "number" and type(saved[4]) == "number" then
+        frame:SetPoint(saved[1], UIParent, saved[2], saved[3], saved[4])
+    else
+        frame:SetPoint("CENTER", UIParent, "CENTER", 0, -160)
+    end
+end
+
+local function applyScale()
+    local scale = settings() and settings().scale or 1
+    frame:SetScale(math.max(MIN_SCALE, math.min(MAX_SCALE, scale)))
+end
+
+local function savePoint()
+    local point, _, relativePoint, x, y = frame:GetPoint(1)
+    if point and settings() then
+        settings().point = { point, relativePoint, x, y }
+    end
+end
+
+local function setScale(delta)
+    local data = settings()
+    if not data then return end
+    local scale = (data.scale or 1) + delta
+    data.scale = math.max(MIN_SCALE, math.min(MAX_SCALE, math.floor(scale * 10 + 0.5) / 10))
+    applyScale()
+    applyPoint()
+end
+
+local function hideForGood()
+    if settings() then settings().shown = false end
+    frame:Hide()
+    SS:Print("Show it again with /seq nextup")
+end
+
+local function showTooltip(widget)
+    local id = currentId()
+    local entry = id and SS.Engine:GetNextEntry(id)
+    if not entry then return end
+    GameTooltip:SetOwner(widget, "ANCHOR_RIGHT")
+    local kind = entry.kind
+    if kind == "spell" or kind == "pet" then
+        GameTooltip:SetSpellByID(entry.id)
+    elseif kind == "item" then
+        GameTooltip:SetItemByID(entry.id)
+    elseif kind == "slot" then
+        local itemID = GetInventoryItemID("player", entry.id)
+        if itemID then
+            GameTooltip:SetItemByID(itemID)
+        else
+            GameTooltip:AddLine("Empty trinket slot")
+        end
+    else
+        GameTooltip:AddLine(SS.Compiler.EntryName(entry) or tostring(entry.id))
+    end
+    local seq = SS.Database:GetSequence(id)
+    local r, g, b = unpack(Theme.colors.TEXT_MUTED)
+    GameTooltip:AddLine("Next press of " .. (seq and seq.name or "your sequence"), r, g, b)
+    GameTooltip:Show()
+end
+
+local function build()
+    frame = CreateFrame("Button", "SimpleSequenceNextUp", UIParent)
+    frame:SetSize(SIZE, SIZE)
+    frame:SetFrameStrata("MEDIUM")
+    frame:SetClampedToScreen(true)
+    frame:SetMovable(true)
+    frame:EnableMouse(true)
+    frame:RegisterForClicks("RightButtonUp")
+    frame:RegisterForDrag("LeftButton")
+    Theme:Fill(frame, "TILE_BG")
+    Theme:FlatBorder(frame)
+    frame.icon = frame:CreateTexture(nil, "ARTWORK")
+    frame.icon:SetPoint("TOPLEFT", ICON_INSET, -ICON_INSET)
+    frame.icon:SetPoint("BOTTOMRIGHT", -ICON_INSET, ICON_INSET)
+    frame.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    frame.pulse = frame.icon:CreateAnimationGroup()
+    local pulse = frame.pulse:CreateAnimation("Alpha")
+    pulse:SetFromAlpha(0.35)
+    pulse:SetToAlpha(1)
+    pulse:SetDuration(PULSE_TIME)
+    pulse:SetSmoothing("OUT")
+    frame:SetScript("OnDragStart", function(widget)
+        if IsShiftKeyDown() then widget:StartMoving() end
+    end)
+    frame:SetScript("OnDragStop", function(widget)
+        widget:StopMovingOrSizing()
+        savePoint()
+    end)
+    frame:SetScript("OnClick", function(widget, button)
+        if button ~= "RightButton" then return end
+        Widgets:ContextMenu(widget, {
+            { text = "Hide", fn = hideForGood },
+            { text = "Bigger", fn = function() setScale(SCALE_STEP) end },
+            { text = "Smaller", fn = function() setScale(-SCALE_STEP) end },
+        })
+    end)
+    frame:SetScript("OnEnter", showTooltip)
+    frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    applyPoint()
+    applyScale()
+    frame:Hide()
+end
+
+function NextUp:Refresh()
+    if not frame then return end
+    local data = settings()
+    local id = currentId()
+    if not data or data.shown == false or not id or not SS.Database:GetSequence(id) then
+        frame:Hide()
+        return
+    end
+    local entry = SS.Engine:GetNextEntry(id)
+    local icon = entry and SS.Compiler.EntryIcon(entry)
+    frame.icon:SetTexture(icon or UNKNOWN_ICON)
+    if not frame:IsShown() then
+        frame:Show()
+    else
+        frame.pulse:Stop()
+        frame.pulse:Play()
+    end
+end
+
+function NextUp:Init()
+    if frame then return end
+    build()
+    self:Refresh()
+end
+
+function NextUp:Toggle()
+    local data = settings()
+    if not data then return end
+    data.shown = not (data.shown ~= false)
+    if data.shown then
+        if currentId() then
+            self:Refresh()
+        else
+            SS:Print("The next-up icon appears when you press a sequence.")
+        end
+    else
+        if frame then frame:Hide() end
+        SS:Print("Next-up icon hidden. Show it again with /seq nextup")
+    end
+end
+
+SS:On("LOGIN", function() NextUp:Init() end)
+SS:On("SEQUENCE_PRESSED", function() NextUp:Refresh() end)
+SS:On("SEQUENCES_CHANGED", function() NextUp:Refresh() end)
+SS:On("SPEC_CHANGED", function() NextUp:Refresh() end)
