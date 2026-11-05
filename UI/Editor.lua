@@ -468,6 +468,13 @@ local function createTile()
     tile.target:SetPoint("BOTTOMLEFT", 3, 2)
     tile.mods = Theme:Text(tile, "", "small", "TEXT_TITLE")
     tile.mods:SetPoint("BOTTOMRIGHT", -3, 2)
+    tile.everyBg = Theme:Fill(tile, "DIALOG_BG", "ARTWORK")
+    tile.everyBg:SetDrawLayer("ARTWORK", 2)
+    tile.everyBg:ClearAllPoints()
+    tile.everyBg:SetPoint("TOPRIGHT", -1, -1)
+    tile.everyBg:SetHeight(BADGE_H)
+    tile.every = Theme:Text(tile, "", "small", "TEXT_WARNING")
+    tile.every:SetPoint("TOPRIGHT", -3, -2)
 
     tile.hoverTex = Theme:Texture(tile, "listHover", "OVERLAY")
     tile.hoverTex:SetAllPoints()
@@ -607,6 +614,23 @@ local function dropOnSection(sec, payload)
         return insertAt(sec, payload.entry, index)
     end
     Editor:SetActive(sec.key)
+    if (payload.type == "step") == (sec.key == "extras") then
+        local seq = database():GetSequence(id)
+        local fromList = seq and listFor(seq, payload.section or "extras")
+        local item = fromList and fromList[payload.index]
+        local ok, reason = database():MoveAcross(id, payload.section or "extras", payload.index, sec.key, index)
+        if ok then
+            Editor.flash = { key = sec.key, index = index }
+            if payload.type == "step" and item and ((item.target and item.target ~= "target") or next(item.mods or {})) then
+                toast("Every press spells use your target, so Cast on and Hold-key options were removed")
+            end
+        elseif reason == "emote" then
+            toast("Emotes can't go in Every press")
+        elseif reason == "full" then
+            toast("That part is full")
+        end
+        return ok
+    end
     if payload.type == "step" then
         local final = index
         if payload.section == sec.key and index > payload.index then final = index - 1 end
@@ -629,9 +653,7 @@ end
 local function acceptsPayload(sec, payload)
     if payload.id and payload.id ~= Editor.id then return false end
     if Editor.scroll and not Editor.scroll:IsMouseOver() then return false end
-    if payload.type == "entry" then return true end
-    if sec.def.extras then return payload.type == "extra" end
-    return payload.type == "step"
+    return payload.type == "entry" or payload.type == "step" or payload.type == "extra"
 end
 
 local function buildSection(child, def)
@@ -678,6 +700,11 @@ local function buildSection(child, def)
                 database():SetFlag(Editor.id, "startAttack", box:GetChecked() == true)
             end
         end)
+        sec.autoTarget = Theme:Checkbox(sec, 300, "Target the nearest enemy if you have none", function(box)
+            if Editor.id then
+                database():SetFlag(Editor.id, "autoTarget", box:GetChecked() == true)
+            end
+        end)
     end
 
     SS.DragDrop:RegisterTarget(sec, {
@@ -704,6 +731,11 @@ local function stepBadges(tile, step)
     tile.target:SetText(target)
     tile.mods:SetText(letters ~= "" and ("+" .. letters) or "")
     tile.strip:SetShown(target ~= "" or letters ~= "")
+    local every = tile.section and tile.section.key == "loop" and step.every or nil
+    tile.every:SetText(every and ("1/" .. every) or "")
+    tile.everyBg:SetWidth(tile.every:GetStringWidth() + 6)
+    tile.every:SetShown(every ~= nil)
+    tile.everyBg:SetShown(every ~= nil)
 end
 
 local function setupTile(sec, index, item, number)
@@ -728,6 +760,8 @@ local function setupTile(sec, index, item, number)
         tile.target:SetText("")
         tile.mods:SetText("")
         tile.strip:Hide()
+        tile.every:Hide()
+        tile.everyBg:Hide()
     else
         stepBadges(tile, item)
     end
@@ -767,6 +801,11 @@ local function layoutSection(sec, seq, width, base)
         sec.startAttack.label:SetWidth(math.max(60, width - 34))
         sec.startAttack:SetChecked(seq.startAttack == true)
         body = body + 12 + Theme.checkboxSize
+        sec.autoTarget:ClearAllPoints()
+        sec.autoTarget:SetPoint("TOPLEFT", sec.startAttack, "BOTTOMLEFT", 0, -6)
+        sec.autoTarget.label:SetWidth(math.max(60, width - 34))
+        sec.autoTarget:SetChecked(seq.autoTarget ~= false)
+        body = body + 6 + Theme.checkboxSize
     end
     sec:SetBodyHeight(body)
     return count

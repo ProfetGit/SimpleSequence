@@ -11,6 +11,7 @@ local SCROLL_RIGHT = 20
 local UNKNOWN_ICON = 134400
 local BACKUP_AFTER = 7 * 24 * 60 * 60
 local ICON_CROP = 0.07
+local BAR_HEIGHT = 3
 local EMPTY_LINES = {
     "1. Drag spells from the right into the Loop.",
     "2. Press Put on action bar.",
@@ -131,6 +132,49 @@ local function putOnActionBar(id)
     end
 end
 
+local function rowCount()
+    local list = SS.Database:GetSequences(SS.currentSpec)
+    return list and #list or 0
+end
+
+local function dropSlot()
+    local count = rowCount()
+    local child = List.scroll and List.scroll.child
+    local top = child and child:GetTop()
+    if not top then return count + 1 end
+    local scale = child:GetEffectiveScale()
+    local _, cursorY = GetCursorPosition()
+    cursorY = cursorY / scale
+    local slot = math.floor((top - cursorY) / (ROW_HEIGHT + ROW_GAP) + 0.5) + 1
+    return math.max(1, math.min(count + 1, slot))
+end
+
+local function updateBar()
+    local slot = dropSlot()
+    List.dropSlot = slot
+    local bar = List.bar
+    bar:ClearAllPoints()
+    bar:SetPoint("TOPLEFT", List.scroll.child, "TOPLEFT", 0, -(slot - 1) * (ROW_HEIGHT + ROW_GAP) + ROW_GAP / 2 + BAR_HEIGHT / 2)
+    bar:SetSize(state.rowWidth, BAR_HEIGHT)
+    bar:Show()
+end
+
+local function hideBar()
+    List.bar:Hide()
+    List.dropSlot = nil
+end
+
+local function dropOnList(payload)
+    local slot = List.dropSlot or dropSlot()
+    hideBar()
+    if payload.type ~= "sequence" then return false end
+    local final = slot
+    if slot > payload.index then final = slot - 1 end
+    if final == payload.index then return true end
+    SS.Database:MoveInList(SS.currentSpec, payload.index, final)
+    return true
+end
+
 local function createRow(parent)
     local row = Theme:ListButton(parent, state.rowWidth, ROW_HEIGHT, "", function(widget, button)
         if button == "RightButton" then
@@ -140,6 +184,12 @@ local function createRow(parent)
         end
     end)
     row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row:RegisterForDrag("LeftButton")
+    row:SetScript("OnDragStart", function(widget)
+        if widget.id and widget.index then
+            SS.DragDrop:Begin({ type = "sequence", id = widget.id, index = widget.index }, widget.iconFile)
+        end
+    end)
     row.iconButton = CreateFrame("Button", nil, row)
     row.iconButton:SetSize(ICON_SIZE, ICON_SIZE)
     row.iconButton:SetPoint("LEFT", 6, 0)
@@ -164,9 +214,11 @@ local function createRow(parent)
     return row
 end
 
-local function fillRow(row, seq, selected)
+local function fillRow(row, seq, index, selected)
     row.id = seq.id
-    row.icon:SetTexture(sequenceIcon(seq))
+    row.index = index
+    row.iconFile = sequenceIcon(seq)
+    row.icon:SetTexture(row.iconFile)
     row.label:SetText(seq.name or "")
     local warn = hasError(seq)
     row.warn:SetShown(warn)
@@ -214,12 +266,13 @@ function List:Refresh()
         end
         row:ClearAllPoints()
         row:SetPoint("TOPLEFT", 0, -(index - 1) * (ROW_HEIGHT + ROW_GAP))
-        fillRow(row, seq, seq.id == selected)
+        fillRow(row, seq, index, seq.id == selected)
         row:Show()
     end
     for index = #list + 1, #rows do
         rows[index]:Hide()
         rows[index].id = nil
+        rows[index].index = nil
     end
     local total = #list * (ROW_HEIGHT + ROW_GAP)
     self.scroll:UpdateExtent(total)
@@ -249,6 +302,18 @@ function List:Build(parent)
     self.scroll = Widgets:Scroll(parent)
     self.scroll:SetPoint("TOPLEFT", 0, -(HEADER_HEIGHT + 8))
     self.scroll:SetPoint("BOTTOMRIGHT", -SCROLL_RIGHT, FOOTER_HEIGHT + 8)
+
+    self.bar = Theme:Fill(self.scroll.child, "ACCENT_COPPER", "OVERLAY")
+    self.bar:ClearAllPoints()
+    self.bar:SetSize(state.rowWidth, BAR_HEIGHT)
+    self.bar:Hide()
+    SS.DragDrop:RegisterTarget(self.scroll, {
+        accept = function(payload) return payload.type == "sequence" end,
+        onEnter = updateBar,
+        onMove = updateBar,
+        onLeave = hideBar,
+        onDrop = dropOnList,
+    })
 
     self.footer = CreateFrame("Frame", nil, parent)
     self.footer:SetPoint("BOTTOMLEFT")

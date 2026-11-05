@@ -5,6 +5,7 @@ SS.Bindings = Bindings
 
 local MACRO_NAME_MAX = 16
 local DEFAULT_ICON = 134400
+local UNDO_GRACE = 60
 local owner = CreateFrame("Frame")
 local needsApply = false
 local macroQueue = {}
@@ -233,11 +234,17 @@ SS:On("SEQUENCE_DELETED", function(id, seq)
     if not seq or not seq.macroName then
         return
     end
-    if InCombatLockdown() then
-        deleteQueue[id] = seq.macroName
-    else
-        deleteOwnedMacro(seq.macroName, id)
-    end
+    local name = seq.macroName
+    C_Timer.After(UNDO_GRACE, function()
+        if SS.Database:GetSequence(id) then
+            return
+        end
+        if InCombatLockdown() then
+            deleteQueue[id] = name
+        else
+            deleteOwnedMacro(name, id)
+        end
+    end)
 end)
 
 SS:On("COMBAT_ENDED", flush)

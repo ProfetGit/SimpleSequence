@@ -82,6 +82,9 @@ local function sanitizeStep(step)
     if TARGETS[step.target] then
         clean.target = step.target
     end
+    if isWholeNumber(step.every) and step.every >= 2 and step.every <= SS.MAX_EVERY then
+        clean.every = step.every
+    end
     if type(step.mods) == "table" then
         for _, mod in ipairs(MOD_KEYS) do
             local modEntry = sanitizeEntry(step.mods[mod], false)
@@ -119,6 +122,7 @@ function Database:SanitizeSequence(raw)
         loop = sanitizeList(raw.loop, SS.MAX_STEPS, sanitizeStep),
         extras = sanitizeList(raw.extras, SS.MAX_EXTRAS, function(e) return sanitizeEntry(e, false) end),
         startAttack = raw.startAttack == true,
+        autoTarget = raw.autoTarget ~= false,
         reset = { combat = true, target = false },
     }
     if seq.name == "" then
@@ -141,6 +145,7 @@ local function newSequenceBody(name)
         loop = {},
         extras = {},
         startAttack = false,
+        autoTarget = true,
         reset = { combat = true, target = false },
     }
 end
@@ -155,6 +160,7 @@ local function normalizeSequence(seq, id)
     seq.reset = type(seq.reset) == "table" and seq.reset or {}
     if seq.reset.combat == nil then seq.reset.combat = true end
     seq.startAttack = seq.startAttack == true
+    seq.autoTarget = seq.autoTarget ~= false
 end
 
 function Database:Init()
@@ -542,6 +548,17 @@ function Database:SetStepTarget(id, section, index, target)
     end, "Change target")
 end
 
+function Database:SetStepEvery(id, section, index, every)
+    if section ~= "loop" then return false end
+    if every == 1 then every = nil end
+    if every ~= nil and not (isWholeNumber(every) and every >= 2 and every <= SS.MAX_EVERY) then return false end
+    return self:Update(id, function(seq)
+        local step = seq.loop[index]
+        if not step or step.every == every then return false end
+        step.every = every
+    end, "Change how often")
+end
+
 function Database:SetStepMod(id, section, index, mod, entry)
     if not isSection(section) then return false end
     if mod ~= "shift" and mod ~= "ctrl" and mod ~= "alt" then return false end
@@ -582,12 +599,50 @@ function Database:MoveExtra(id, from, to)
     end, "Move extra")
 end
 
+-- Moves between a step list (opener/loop) and the every-press extras.
+-- Returns false, reason when refused.
+function Database:MoveAcross(id, fromSection, fromIndex, toSection, toIndex)
+    local toExtras = toSection == "extras"
+    if toExtras == (fromSection == "extras") then return false end
+    if not toExtras and not isSection(toSection) then return false end
+    if toExtras and not isSection(fromSection) then return false end
+    local reason
+    local ok = self:Update(id, function(seq)
+        if toExtras then
+            local step = seq[fromSection][fromIndex]
+            if not step then return false end
+            local clean = sanitizeEntry(step.entry, false)
+            if not clean then
+                reason = "emote"
+                return false
+            end
+            if #seq.extras >= SS.MAX_EXTRAS then
+                reason = "full"
+                return false
+            end
+            table.remove(seq[fromSection], fromIndex)
+            table.insert(seq.extras, clampIndex(toIndex or #seq.extras + 1, 1, #seq.extras + 1), clean)
+        else
+            local entry = seq.extras[fromIndex]
+            if not entry then return false end
+            local list = seq[toSection]
+            if #list >= SS.MAX_STEPS then
+                reason = "full"
+                return false
+            end
+            table.remove(seq.extras, fromIndex)
+            table.insert(list, clampIndex(toIndex or #list + 1, 1, #list + 1), newStep(entry))
+        end
+    end, "Move step")
+    return ok, reason
+end
+
 function Database:SetFlag(id, path, value)
     value = value and true or false
     return self:Update(id, function(seq)
-        if path == "startAttack" then
-            if seq.startAttack == value then return false end
-            seq.startAttack = value
+        if path == "startAttack" or path == "autoTarget" then
+            if seq[path] == value then return false end
+            seq[path] = value
         elseif path == "reset.combat" or path == "reset.target" then
             local field = path:sub(7)
             if seq.reset[field] == value then return false end

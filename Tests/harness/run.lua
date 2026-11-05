@@ -269,6 +269,67 @@ step("DragDrop", function()
     DD:Cancel()
 end)
 
+step("SequenceList reorder", function()
+    local a, b, c = DB:Create(70, "Order A"), DB:Create(70, "Order B"), DB:Create(70, "Order C")
+    local function order()
+        local names = {}
+        for _, q in ipairs(DB:GetSequences(70)) do names[#names + 1] = q.name end
+        return table.concat(names, ",")
+    end
+    SS.currentSpec = 70
+    SS.Window:Refresh()
+    SS.SequenceList:Refresh()
+    local before = order()
+    expect("three sequences in order", before:find("Order A,Order B,Order C", 1, true) ~= nil)
+    local list = DB:GetSequences(70)
+    local row
+    for _, f in ipairs(H.frames) do
+        if f.__scripts and f.__scripts.OnDragStart and f.index == 1 and f.id == list[1].id then row = f end
+    end
+    expect("row with drag handler", row ~= nil)
+    if row then
+        H.mouseDown = true
+        row.__scripts.OnDragStart(row)
+        expect("row drag began", SS.DragDrop:IsDragging())
+        expect("payload is sequence", SS.DragDrop:GetPayload().type == "sequence")
+        SS.DragDrop:Cancel()
+        H.mouseDown = false
+    end
+    local target
+    for _, f in ipairs(H.frames) do
+        if f == SS.SequenceList.scroll then target = f end
+    end
+    expect("scroll frame exists", target ~= nil)
+    local ok = DB:MoveInList(70, 1, #DB:GetSequences(70))
+    expect("MoveInList ok", ok)
+    expect("reordered", order() ~= before)
+    DB:Undo()
+    expect("undo restores order", order() == before)
+    SS.currentSpec = 63
+    SS.Window:Refresh()
+end)
+
+step("Minimap button", function()
+    local MB = SS.MinimapButton
+    expect("MinimapButton module", MB ~= nil)
+    expect("minimap defaults", SS.db.minimap and type(SS.db.minimap.angle) == "number" and SS.db.minimap.hide == false)
+    expect("button created", MB.button ~= nil)
+    SlashCmdList.SIMPLESEQUENCE("minimap")
+    expect("hidden after toggle", SS.db.minimap.hide == true and not MB.button:IsShown())
+    SlashCmdList.SIMPLESEQUENCE("minimap")
+    expect("shown after toggle", SS.db.minimap.hide == false and MB.button:IsShown())
+    local scripts = MB.button.__scripts
+    scripts.OnEnter(MB.button)
+    scripts.OnLeave(MB.button)
+    scripts.OnClick(MB.button, "LeftButton")
+    scripts.OnClick(MB.button, "RightButton")
+    scripts.OnDragStart(MB.button)
+    expect("drag update set", MB.button.__scripts.OnUpdate ~= nil)
+    MB.button.__scripts.OnUpdate(MB.button, 0.02)
+    scripts.OnDragStop(MB.button)
+    expect("drag update cleared", MB.button.__scripts.OnUpdate == nil)
+end)
+
 local HANDLERS = {
     { "OnShow" },
     { "OnEnter" }, { "OnLeave" }, { "OnMouseDown", "LeftButton" }, { "OnMouseUp", "LeftButton" },
@@ -286,6 +347,7 @@ local function smoke()
     for _, f in ipairs(snapshot) do
         for _, h in ipairs(HANDLERS) do
             local fn = f.__scripts and f.__scripts[h[1]]
+            if fn and h[1] == "OnDragStart" and not f:IsVisible() then fn = nil end
             if fn then
                 n = n + 1
                 local name = f.__name or f.__kind

@@ -7,6 +7,8 @@ SS.BUTTON_PREFIX = "SimpleSequenceBtn_"
 SS.MACRO_PREFIX = "SS "
 SS.MAX_STEPS = 64
 SS.MAX_EXTRAS = 8
+SS.MAX_EVERY = 4
+SS.MAX_COMPILED = 240
 SS.MAX_STEP_TEXT = 1023
 
 -- Saved variables are restored before the first addon file runs; Forever beta handed
@@ -119,7 +121,10 @@ function SS:GetSpecLabel()
         local _, name, _, icon = C_SpecializationInfo.GetSpecializationInfo(index)
         local className = UnitClass("player")
         if name then
-            return name .. " " .. (className or ""), icon
+            if not className or className == name then
+                return name, icon
+            end
+            return name .. " " .. className, icon
         end
     end
     return UnitClass("player") or "", nil

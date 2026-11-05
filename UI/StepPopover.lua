@@ -21,6 +21,15 @@ local TARGETS = {
 }
 local TARGET_TEXT = {}
 for _, option in ipairs(TARGETS) do TARGET_TEXT[option.value] = option.text end
+local OFTEN = {
+    { value = 1, text = "Every time" },
+    { value = 2, text = "Every 2nd time" },
+    { value = 3, text = "Every 3rd time" },
+    { value = 4, text = "Every 4th time" },
+}
+local OFTEN_TEXT = {}
+for _, option in ipairs(OFTEN) do OFTEN_TEXT[option.value] = option.text end
+local OFTEN_HEIGHT = 40
 
 local HELP = "Modifiers let one button do two jobs: hold Shift to cast the other spell instead."
 
@@ -158,8 +167,26 @@ local function build()
     frame.cast:SetPoint("TOPLEFT", PAD, -top)
     frame.cast:SetLabel("Cast on")
 
+    frame.often = Theme:Dropdown(frame, WIDTH - PAD * 2, OFTEN,
+        function(value)
+            local step = currentStep()
+            return step ~= nil and (step.every or 1) == value
+        end,
+        function(value)
+            if state then
+                SS.Database:SetStepEvery(state.id, state.section, state.index, value)
+            end
+        end)
+    frame.often:SetPoint("TOPLEFT", PAD, -(top + 40))
+    frame.often:SetLabel("How often")
+
     frame.rows = {}
-    local rowTop = top + 40
+    frame.body = CreateFrame("Frame", nil, frame)
+    frame.body:SetPoint("TOPLEFT", 0, -(top + 40))
+    frame.body:SetPoint("TOPRIGHT", 0, -(top + 40))
+    frame.body:SetHeight(1)
+    frame.baseHeight = top + 40
+    local rowTop = 0
     for i, def in ipairs(MODS) do
         local row = { mod = def.key }
         row.label = Theme:Text(frame, def.label, "body", "TEXT_BODY")
@@ -177,9 +204,9 @@ local function build()
             setMod(def.key, nil)
         end)
         local y = -(rowTop + (i - 1) * 36)
-        row.label:SetPoint("TOPLEFT", PAD, y - 6)
-        row.slot:SetPoint("TOPLEFT", PAD + 108, y)
-        row.clear:SetPoint("TOPRIGHT", -PAD, y - 4)
+        row.label:SetPoint("TOPLEFT", frame.body, "TOPLEFT", PAD, y - 6)
+        row.slot:SetPoint("TOPLEFT", frame.body, "TOPLEFT", PAD + 108, y)
+        row.clear:SetPoint("TOPRIGHT", frame.body, "TOPRIGHT", -PAD, y - 4)
         row.name:SetPoint("LEFT", row.slot, "RIGHT", 8, 0)
         row.name:SetPoint("RIGHT", row.clear, "LEFT", -4, 0)
         wireSlot(row)
@@ -188,14 +215,14 @@ local function build()
 
     local helpTop = rowTop + 3 * 36 + 4
     frame.help = Theme:Text(frame, HELP, "small", "TEXT_MUTED")
-    frame.help:SetPoint("TOPLEFT", PAD, -helpTop)
+    frame.help:SetPoint("TOPLEFT", frame.body, "TOPLEFT", PAD, -helpTop)
     frame.help:SetWidth(WIDTH - PAD * 2)
     frame.help:SetWordWrap(true)
     frame.help:SetJustifyV("TOP")
 
     local line2 = Theme:Divider(frame)
-    line2:SetPoint("TOPLEFT", PAD, -(helpTop + 44))
-    line2:SetPoint("TOPRIGHT", -PAD, -(helpTop + 44))
+    line2:SetPoint("TOPLEFT", frame.body, "TOPLEFT", PAD, -(helpTop + 44))
+    line2:SetPoint("TOPRIGHT", frame.body, "TOPRIGHT", -PAD, -(helpTop + 44))
 
     frame.remove = Theme:ListButton(frame, WIDTH - PAD * 2, 26, "Remove step", function()
         if not state then return end
@@ -207,8 +234,9 @@ local function build()
             SS.Database:RemoveStep(id, section, index)
         end
     end)
-    frame.remove:SetPoint("TOPLEFT", PAD, -(helpTop + 52))
-    frame:SetHeight(helpTop + 52 + 26 + PAD)
+    frame.remove:SetPoint("TOPLEFT", frame.body, "TOPLEFT", PAD, -(helpTop + 52))
+    frame.bodyHeight = helpTop + 52 + 26 + PAD
+    frame:SetHeight(frame.baseHeight + frame.bodyHeight)
 
     frame:SetScript("OnShow", function(self)
         self:RegisterEvent("GLOBAL_MOUSE_DOWN")
@@ -222,8 +250,10 @@ local function build()
     frame:SetScript("OnEvent", function(self, _, button)
         if not state or button == nil then return end
         if self:IsMouseOver() or (state.anchor and state.anchor:IsMouseOver()) then return end
-        local menuButton = self.cast and self.cast.button
-        if menuButton and type(menuButton.IsMenuOpen) == "function" and menuButton:IsMenuOpen() then return end
+        for _, dropdown in ipairs({ self.cast, self.often }) do
+            local menuButton = dropdown and dropdown.button
+            if menuButton and type(menuButton.IsMenuOpen) == "function" and menuButton:IsMenuOpen() then return end
+        end
         local sidebar = SS.SpellSidebar and SS.SpellSidebar.frame
         if StepPopover.armed and sidebar and sidebar:IsMouseOver() then return end
         close()
@@ -241,6 +271,16 @@ function StepPopover:Update()
     frame.name:SetText(entryName(step.entry))
     local target = step.target or "target"
     frame.cast:SetValueText(TARGET_TEXT[target] or TARGET_TEXT.target)
+    local inLoop = state.section == "loop"
+    frame.often:SetShown(inLoop)
+    if inLoop then
+        frame.often:SetValueText(OFTEN_TEXT[step.every or 1] or OFTEN_TEXT[1])
+    end
+    local offset = inLoop and OFTEN_HEIGHT or 0
+    frame.body:ClearAllPoints()
+    frame.body:SetPoint("TOPLEFT", 0, -(frame.baseHeight + offset))
+    frame.body:SetPoint("TOPRIGHT", 0, -(frame.baseHeight + offset))
+    frame:SetHeight(frame.baseHeight + offset + frame.bodyHeight)
     local mods = step.mods or {}
     for _, row in ipairs(frame.rows) do
         local entry = mods[row.mod]

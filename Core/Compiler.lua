@@ -6,6 +6,8 @@ SS.Compiler = Compiler
 local UNKNOWN_ICON = 134400
 local EMOTE_ICON = 132311
 local MODS = { "shift", "ctrl", "alt" }
+local EVERY_LABEL = { [2] = "every 2nd time", [3] = "every 3rd time", [4] = "every 4th time" }
+Compiler.EVERY_LABEL = EVERY_LABEL
 
 local TARGET_CONDITIONS = {
     target = nil,
@@ -69,14 +71,11 @@ local function verbFor(entries)
     return "/cast"
 end
 
-function Compiler:StepText(seq, step)
-    local entry = step and step.entry
-    if not entry then return "" end
-    if entry.kind == "emote" then
-        return "/" .. tostring(entry.id)
-    end
-
+local function everyPressLines(seq)
     local lines = {}
+    if seq.autoTarget then
+        lines[#lines + 1] = "/targetenemy [noexists][dead]"
+    end
     if seq.startAttack then
         lines[#lines + 1] = "/startattack [harm,nodead]"
     end
@@ -85,7 +84,17 @@ function Compiler:StepText(seq, step)
             lines[#lines + 1] = verbFor({ extra }) .. " " .. entryArg(extra)
         end
     end
+    return lines
+end
 
+function Compiler:StepText(seq, step)
+    local entry = step and step.entry
+    if not entry then return "" end
+    if entry.kind == "emote" then
+        return "/" .. tostring(entry.id)
+    end
+
+    local lines = everyPressLines(seq)
     local unit = TARGET_CONDITIONS[step.target]
     local fallback = (step.target == "mouseover" or step.target == "focus")
     local used = { entry }
@@ -121,6 +130,11 @@ function Compiler:StepText(seq, step)
     return table.concat(lines, "\n")
 end
 
+local function gcd(a, b)
+    while b ~= 0 do a, b = b, a % b end
+    return a
+end
+
 function Compiler:Compile(seq)
     local result = { steps = {}, entries = {}, problems = {}, ok = true }
     local opener, loop = seq.opener or {}, seq.loop or {}
@@ -132,11 +146,12 @@ function Compiler:Compile(seq)
         end
     end
 
-    local function add(step)
+    local function add(step, repeated)
         local n = #result.steps + 1
         local text = self:StepText(seq, step)
         result.steps[n] = text
         result.entries[n] = step.entry
+        if repeated then return end
         local kind = step.entry and step.entry.kind
         if (kind == "spell" or kind == "pet") and not C_Spell.GetSpellName(step.entry.id) then
             problem("warn", "Press " .. n .. ": spell " .. tostring(step.entry.id) .. " was not found.")
@@ -147,18 +162,45 @@ function Compiler:Compile(seq)
     end
 
     for _, step in ipairs(opener) do add(step) end
-    for _, step in ipairs(loop) do add(step) end
     result.loopStart = #opener + 1
-    result.count = #result.steps
+    local rounds, everyTime = 1, false
+    for _, step in ipairs(loop) do
+        local every = step.every or 1
+        if every == 1 then
+            everyTime = true
+        elseif rounds % every ~= 0 then
+            rounds = rounds * every / gcd(rounds, every)
+        end
+    end
+    for round = 0, rounds - 1 do
+        for _, step in ipairs(loop) do
+            if round % (step.every or 1) == 0 then add(step, round > 0) end
+        end
+    end
+    if #loop > 0 and not everyTime then
+        problem("warn", "Every Loop spell is set to \"every Nth time\". Set at least one to every time, or the timing has no effect.")
+    end
     if #loop == 0 then
-        problem("error", "The loop is empty. Add at least one spell to the loop.")
+        local filler = table.concat(everyPressLines(seq), "\n")
+        if #opener > 0 and filler ~= "" then
+            result.steps[#result.steps + 1] = filler
+        elseif #opener > 0 then
+            problem("error", "After the opener there is nothing to do. Add a spell to the Loop, or tick Start auto-attack.")
+        else
+            problem("error", "The loop is empty. Add at least one spell to the loop.")
+        end
+    end
+    result.count = #result.steps
+    if result.count > SS.MAX_COMPILED then
+        problem("error", "This sequence unrolls to " .. result.count .. " presses (the limit is " .. SS.MAX_COMPILED
+            .. "). Use fewer \"every 3rd/4th time\" steps or a shorter loop.")
     end
     return result
 end
 
 function Compiler:Describe(seq)
     local opener, loop = seq.opener or {}, seq.loop or {}
-    if #loop == 0 then
+    if #loop == 0 and #opener == 0 then
         return "Add a spell to the loop to get started."
     end
     local parts = {}
@@ -166,10 +208,21 @@ function Compiler:Describe(seq)
     for _, list in ipairs({ opener, loop }) do
         for _, step in ipairs(list) do
             n = n + 1
-            parts[#parts + 1] = "Press " .. n .. ": " .. (Compiler.EntryName(step.entry) or "Unknown")
+            local every = list == loop and step.every or 1
+            local label = Compiler.EntryName(step.entry) or "Unknown"
+            if every > 1 then
+                label = label .. " (" .. (EVERY_LABEL[every] or ("every " .. every .. "th time")) .. ")"
+            end
+            parts[#parts + 1] = "Press " .. n .. ": " .. label
         end
     end
-    if #opener > 0 then
+    if #loop == 0 then
+        if seq.startAttack then
+            parts[#parts + 1] = "then keeps auto-attacking"
+        elseif #(seq.extras or {}) > 0 then
+            parts[#parts + 1] = "then only the Every press spells"
+        end
+    elseif #opener > 0 then
         parts[#parts + 1] = "then repeats from Press " .. (#opener + 1)
     else
         parts[#parts + 1] = "then repeats"

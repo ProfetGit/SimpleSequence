@@ -66,6 +66,14 @@ function Commands.nextup()
     end
 end
 
+function Commands.minimap()
+    if SS.MinimapButton then
+        SS.MinimapButton:Toggle()
+    else
+        SS:Print("The minimap button is not available.")
+    end
+end
+
 function Commands.debug()
     local id = requireSelected()
     if not id then return end
@@ -82,10 +90,11 @@ function Commands.help()
     print("  /seq export - share the selected sequence")
     print("  /seq import - paste a shared sequence")
     print("  /seq nextup - show or hide the next-spell icon")
+    print("  /seq minimap - show or hide the minimap button")
     print("  /seq debug - show what the selected sequence will cast")
 end
 
-local SUBCOMMANDS = { demo = true, reset = true, export = true, import = true, nextup = true, debug = true, help = true }
+local SUBCOMMANDS = { demo = true, reset = true, export = true, import = true, nextup = true, minimap = true, debug = true, help = true }
 
 SLASH_SIMPLESEQUENCE1 = "/seq"
 SLASH_SIMPLESEQUENCE2 = "/simplesequence"

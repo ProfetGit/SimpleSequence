@@ -51,6 +51,12 @@ describe("Compiler", function()
             C:StepText(s, step(spell(1))))
     end)
 
+    it("puts targetenemy before startattack when auto-target is on", function()
+        local s = seq({ autoTarget = true, startAttack = true })
+        assert.equals("/targetenemy [noexists][dead]\n/startattack [harm,nodead]\n/cast Fireball",
+            C:StepText(s, step(spell(1))))
+    end)
+
     it("uses /use when the main entry is an item or slot", function()
         assert.equals("/use item:100", C:StepText(seq(), step({ kind = "item", id = 100 })))
         assert.equals("/use 14", C:StepText(seq(), step({ kind = "slot", id = 14 })))
@@ -86,6 +92,41 @@ describe("Compiler", function()
             local r = C:Compile(seq({ opener = { step(spell(1)) } }))
             assert.is_false(r.ok)
             assert.equals("error", r.problems[1].level)
+            assert.is_false(C:Compile(seq()).ok)
+        end)
+
+        it("opener-only with auto-attack loops a filler press", function()
+            local r = C:Compile(seq({ opener = { step(spell(1)) }, startAttack = true, autoTarget = true }))
+            assert.is_true(r.ok)
+            assert.equals(2, r.count)
+            assert.equals(2, r.loopStart)
+            assert.equals("/targetenemy [noexists][dead]\n/startattack [harm,nodead]", r.steps[2])
+            assert.is_nil(r.entries[2])
+            assert.truthy(C:Describe(seq({ opener = { step(spell(1)) }, startAttack = true })):find("auto%-attacking"))
+        end)
+
+        it("unrolls every-Nth loop steps", function()
+            local loop = { step(spell(1)), step(spell(2)), step(spell(3)) }
+            loop[2].every = 2
+            local r = C:Compile(seq({ opener = { step(spell(4)) }, loop = loop }))
+            assert.is_true(r.ok)
+            assert.equals(6, r.count)
+            assert.equals(2, r.loopStart)
+            local ids = {}
+            for i, e in ipairs(r.entries) do ids[i] = e.id end
+            assert.same({ 4, 1, 2, 3, 1, 3 }, ids)
+            loop[3].every = 3
+            r = C:Compile(seq({ loop = loop }))
+            assert.equals(6 + 3 + 2, r.count)
+            assert.truthy(C:Describe(seq({ loop = loop })):find("every 2nd time", 1, true))
+        end)
+
+        it("warns when no loop step runs every time", function()
+            local loop = { step(spell(1)) }
+            loop[1].every = 2
+            local r = C:Compile(seq({ loop = loop }))
+            assert.is_true(r.ok)
+            assert.equals("warn", r.problems[1].level)
         end)
 
         it("warns about unresolved spells but keeps the step", function()

@@ -66,7 +66,7 @@ function M.new(files, opts)
     installGlobals(known)
 
     local SS = {
-        MAX_STEPS = 64, MAX_EXTRAS = 8, MAX_STEP_TEXT = 1023,
+        MAX_STEPS = 64, MAX_EXTRAS = 8, MAX_STEP_TEXT = 1023, MAX_EVERY = 4, MAX_COMPILED = 240,
         BUTTON_PREFIX = "SimpleSequenceBtn_", MACRO_PREFIX = "SS ",
         currentSpec = 63, events = {}, listeners = {}, printed = {},
     }
