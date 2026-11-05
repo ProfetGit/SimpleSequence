@@ -117,8 +117,6 @@ function Widgets:Scroll(parent, barTop)
     slider:SetMinMaxValues(0, 0)
     -- Continuous like every native bar: a 16 px step made a drag stutter against the glide.
     slider:SetValueStep(1)
-    slider:SetScript("OnEnter", function(widget) Theme:ScrollThumbState(widget.thumb, "over") end)
-    slider:SetScript("OnLeave", function(widget) Theme:ScrollThumbState(widget.thumb, "normal") end)
     -- Dragging the thumb is direct manipulation and must track the hand exactly; a wheel
     -- tick, an arrow or a filter reset is a jump and gets the glide.
     slider:SetScript("OnValueChanged", function(widget, value)
@@ -126,13 +124,63 @@ function Widgets:Scroll(parent, barTop)
         -- The sidebar tracks the view, so every move of the bar reports where it went.
         if scroll.onScroll then scroll.onScroll(value) end
     end)
-    slider:SetScript("OnMouseDown", function(widget)
-        widget.dragging = true
-        Theme:ScrollThumbState(widget.thumb, "down")
+    -- The native Slider drag runs backwards on the Forever client, so the slider takes no
+    -- mouse input and the thumb and track handle it with an explicit direction.
+    slider:EnableMouse(false)
+    local thumb = slider.thumb
+    local function cursorY(frame)
+        local _, y = GetCursorPosition()
+        return y / frame:GetEffectiveScale()
+    end
+    local function setClamped(value)
+        local minValue, maxValue = slider:GetMinMaxValues()
+        slider:SetValue(math.max(minValue, math.min(maxValue, value)))
+    end
+    local function stopDrag()
+        thumb:SetScript("OnUpdate", nil)
+        slider.dragging = false
+        Theme:ScrollThumbState(thumb, thumb:IsMouseOver() and "over" or "normal")
+    end
+    local function followCursor(widget)
+        if not IsMouseButtonDown("LeftButton") then
+            stopDrag()
+            return
+        end
+        local minValue, maxValue = slider:GetMinMaxValues()
+        local travel = slider:GetHeight() - widget:GetHeight()
+        if travel <= 0 then return end
+        setClamped(widget.startValue + (widget.startY - cursorY(widget)) / travel * (maxValue - minValue))
+    end
+    thumb:EnableMouse(true)
+    thumb:SetScript("OnEnter", function(widget)
+        if not slider.dragging then Theme:ScrollThumbState(widget, "over") end
     end)
-    slider:SetScript("OnMouseUp", function(widget)
-        widget.dragging = false
-        Theme:ScrollThumbState(widget.thumb, widget:IsMouseOver() and "over" or "normal")
+    thumb:SetScript("OnLeave", function(widget)
+        if not slider.dragging then Theme:ScrollThumbState(widget, "normal") end
+    end)
+    thumb:SetScript("OnMouseDown", function(widget, button)
+        if button ~= "LeftButton" then return end
+        widget.startY = cursorY(widget)
+        widget.startValue = slider:GetValue()
+        slider.dragging = true
+        Theme:ScrollThumbState(widget, "down")
+        widget:SetScript("OnUpdate", followCursor)
+    end)
+    thumb:SetScript("OnMouseUp", stopDrag)
+    local track = CreateFrame("Button", nil, slider)
+    track:SetAllPoints(slider)
+    track:SetFrameLevel(math.max(0, thumb:GetFrameLevel() - 1))
+    track:SetScript("OnClick", function(widget)
+        local thumbTop, thumbBottom = thumb:GetTop(), thumb:GetBottom()
+        if not thumbTop then return end
+        local y = cursorY(widget)
+        local page = scroll:GetHeight() * 0.9
+        slider.dragging = false
+        if y > thumbTop then
+            setClamped(slider:GetValue() - page)
+        elseif y < thumbBottom then
+            setClamped(slider:GetValue() + page)
+        end
     end)
     scroll:EnableMouseWheel(true)
     scroll:SetScript("OnMouseWheel", function(_, delta)

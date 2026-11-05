@@ -135,6 +135,31 @@ step("movement keys never reach key capture", function()
     expect("no popup from W", H.lastPopup == nil)
     expect("key unchanged", (DB:GetSequence(SS.Editor.id) or {}).key == before)
 end)
+step("scrollbar drag follows the mouse", function()
+    local scroll = SS.Widgets:Scroll(UIParent)
+    scroll:SetHeight(200)
+    scroll:UpdateExtent(1000)
+    local slider, thumb = scroll.slider, scroll.slider.thumb
+    slider:SetHeight(300)
+    thumb:SetHeight(60)
+    expect("slider ignores the mouse itself", slider.__mouse ~= true)
+    local realCursor = GetCursorPosition
+    local y = 300
+    _G.GetCursorPosition = function() return 400, y end
+    H.mouseDown = true
+    thumb.__scripts.OnMouseDown(thumb, "LeftButton")
+    y = 250
+    thumb.__scripts.OnUpdate(thumb, 0.016)
+    local down = slider:GetValue()
+    expect("dragging down scrolls down (" .. tostring(down) .. ")", down > 0)
+    y = 320
+    thumb.__scripts.OnUpdate(thumb, 0.016)
+    expect("dragging up past the start stops at the top", slider:GetValue() == 0)
+    H.mouseDown = false
+    thumb.__scripts.OnUpdate(thumb, 0.016)
+    expect("release ends the drag", thumb.__scripts.OnUpdate == nil)
+    _G.GetCursorPosition = realCursor
+end)
 step("key capture does not stay armed", function()
     local kb = SS.Editor.keyButton
     local function armed() return (kb.label:GetText() or ""):find("Press a key", 1, true) ~= nil end
@@ -151,6 +176,47 @@ end)
 step("Editor:AddEntry", function()
     SS.Editor:AddEntry({ kind = "spell", id = 2 })
     SS.Editor:AddEntry({ kind = "spell", id = 3 })
+end)
+step("BuilderPanel", function()
+    local BP = SS.BuilderPanel
+    expect("BuilderPanel module", BP ~= nil)
+    SS.Window:Show()
+    SS.Editor:Refresh(true)
+    DB:SetSelected(63, seqId)
+    expect("button built", SS.Editor.buildButton ~= nil)
+    SS.Editor.buildButton.__scripts.OnClick(SS.Editor.buildButton, "LeftButton")
+    expect("panel open", BP:IsOpen())
+    local before = DB:GetSequence(seqId)
+    local loopBefore = #before.loop
+    SS.Editor:AddEntry({ kind = "spell", id = 1 })
+    expect("sidebar click goes to panel", #(DB:GetSequence(seqId).loop) == loopBefore)
+    expect("consumed", BP:AddEntry({ kind = "spell", id = 2 }))
+    BP:AddEntry({ kind = "spell", id = 3 })
+    BP:AddEntry({ kind = "emote", id = 1 })
+    local priority = DB:GetSequence(seqId).priority
+    expect("3 priority entries", priority ~= nil and #priority == 3)
+    DB:SetPriority(seqId, { spell(3), spell(2), spell(1) })
+    SS:Fire("SEQUENCE_UPDATED", seqId)
+    local use = SS.BuilderPanel and nil
+    for _, f in ipairs(H.frames) do
+        if f.__kind == "Button" and f.label and f.label.__text == "Use this sequence" then use = f end
+    end
+    expect("use button", use ~= nil)
+    H.inCombat = true
+    SS:Fire("COMBAT_STARTED")
+    expect("use disabled in combat", use:IsEnabled() == false)
+    H.inCombat = false
+    SS:Fire("COMBAT_ENDED")
+    expect("use enabled after combat", use:IsEnabled() == true)
+    use.__scripts.OnClick(use)
+    expect("panel closed after use", not BP:IsOpen())
+    local built = DB:GetSequence(seqId)
+    expect("loop non-empty", #built.loop > 0)
+    expect("undo ok", DB:Undo())
+    BP:Open(seqId)
+    expect("reopen", BP:IsOpen())
+    SS:Fire("SPEC_CHANGED")
+    expect("closed on spec change", not BP:IsOpen())
 end)
 step("StepPopover:Open", function()
     local anchor = CreateFrame("Button", nil, UIParent)

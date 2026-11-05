@@ -123,6 +123,7 @@ function Database:SanitizeSequence(raw)
         extras = sanitizeList(raw.extras, SS.MAX_EXTRAS, function(e) return sanitizeEntry(e, false) end),
         startAttack = raw.startAttack == true,
         autoTarget = raw.autoTarget ~= false,
+        priority = sanitizeList(raw.priority, SS.MAX_PRIORITY, function(e) return sanitizeEntry(e, false) end),
         reset = { combat = true, target = false },
     }
     if seq.name == "" then
@@ -146,6 +147,7 @@ local function newSequenceBody(name)
         extras = {},
         startAttack = false,
         autoTarget = true,
+        priority = {},
         reset = { combat = true, target = false },
     }
 end
@@ -161,6 +163,7 @@ local function normalizeSequence(seq, id)
     if seq.reset.combat == nil then seq.reset.combat = true end
     seq.startAttack = seq.startAttack == true
     seq.autoTarget = seq.autoTarget ~= false
+    seq.priority = type(seq.priority) == "table" and seq.priority or {}
 end
 
 function Database:Init()
@@ -635,6 +638,49 @@ function Database:MoveAcross(id, fromSection, fromIndex, toSection, toIndex)
         end
     end, "Move step")
     return ok, reason
+end
+
+function Database:SetPriority(id, entries)
+    if type(entries) ~= "table" then return false end
+    local clean = {}
+    for _, entry in ipairs(entries) do
+        local item = sanitizeEntry(entry, false)
+        if item and #clean < SS.MAX_PRIORITY then clean[#clean + 1] = item end
+    end
+    return self:Update(id, function(seq)
+        local old = seq.priority or {}
+        local same = #old == #clean
+        for i = 1, #clean do
+            if not same then break end
+            same = old[i].kind == clean[i].kind and old[i].id == clean[i].id
+        end
+        if same then return false end
+        seq.priority = clean
+    end, "Change priority")
+end
+
+function Database:ApplyBuild(id, plan)
+    if type(plan) ~= "table" or not plan.ok then return false end
+    local function steps(list, max)
+        local out = {}
+        for _, entry in ipairs(list or {}) do
+            local clean = sanitizeEntry(entry, false)
+            if clean and #out < max then out[#out + 1] = newStep(clean) end
+        end
+        return out
+    end
+    local opener, loop = steps(plan.opener, SS.MAX_STEPS), steps(plan.loop, SS.MAX_STEPS)
+    if #loop == 0 then return false end
+    local extras = {}
+    for _, entry in ipairs(plan.extras or {}) do
+        local clean = sanitizeEntry(entry, false)
+        if clean and #extras < SS.MAX_EXTRAS then extras[#extras + 1] = clean end
+    end
+    local autoAttack = plan.autoAttack == true
+    return self:Update(id, function(seq)
+        seq.opener, seq.loop, seq.extras = opener, loop, extras
+        if autoAttack then seq.startAttack = true end
+    end, "Build sequence")
 end
 
 function Database:SetFlag(id, path, value)

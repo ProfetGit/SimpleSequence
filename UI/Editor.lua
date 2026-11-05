@@ -101,6 +101,7 @@ function Editor:RemoveExtra(id, index)
 end
 
 function Editor:AddEntry(entry)
+    if SS.BuilderPanel and SS.BuilderPanel:IsOpen() and SS.BuilderPanel:AddEntry(entry) then return end
     if SS.StepPopover and SS.StepPopover:ConsumeArmed(entry) then return end
     local id = self.id
     local seq = id and database():GetSequence(id)
@@ -370,9 +371,27 @@ local function buildTopBar(content)
     iconButton:SetScript("OnClick", function(widget) openIconMenu(widget) end)
     Editor.iconButton = iconButton
 
+    local buildButton = Theme:ListButton(content, 104, 32, "Build for me", function()
+        if Editor.id and SS.BuilderPanel then SS.BuilderPanel:Open(Editor.id) end
+    end)
+    buildButton:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, -PAD)
+    Theme:Fill(buildButton, "SURFACE")
+    Theme:FlatBorder(buildButton)
+    buildButton.label:SetJustifyH("CENTER")
+    buildButton:SetScript("OnEnter", function(widget)
+        widget.hoverFade:To(1)
+        GameTooltip:SetOwner(widget, "ANCHOR_BOTTOM")
+        GameTooltip:AddLine("Build for me", 1, 1, 1)
+        local r, g, b = unpack(Theme.colors.TEXT_MUTED)
+        GameTooltip:AddLine("List your spells by importance and let SimpleSequence work out the opener and loop.", r, g, b, true)
+        GameTooltip:Show()
+    end)
+    buildButton:HookScript("OnLeave", function() GameTooltip:Hide() end)
+    Editor.buildButton = buildButton
+
     local nameBox = Widgets:Input(content, 100, 32)
     nameBox:SetPoint("TOPLEFT", iconButton, "TOPRIGHT", 10, 0)
-    nameBox:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, -PAD)
+    nameBox:SetPoint("TOPRIGHT", buildButton, "TOPLEFT", -8, 0)
     nameBox:SetMaxLetters(40)
     local function commitName(widget)
         if widget.cancelled then

@@ -2,7 +2,7 @@
 ## Title: SimpleSequence
 ## Notes: Build spell sequences by drag and drop. One key, whole rotation.
 ## Author: emppu
-## Version: 0.3.0
+## Version: 0.4.0
 ## SavedVariables: SimpleSequenceDB
 ## IconTexture: Interface\AddOns\SimpleSequence\Media\Icon64
 ## AddonCompartmentFunc: SimpleSequence_OnCompartmentClick
@@ -11,6 +11,7 @@
 Core/Namespace.lua
 Core/Database.lua
 Core/Compiler.lua
+Core/Builder.lua
 Core/SpellSource.lua
 Core/Engine.lua
 Core/Bindings.lua
@@ -22,6 +23,7 @@ UI/DragDrop.lua
 UI/StepPopover.lua
 UI/SpellSidebar.lua
 UI/Editor.lua
+UI/BuilderPanel.lua
 UI/SequenceList.lua
 UI/ShareDialog.lua
 UI/NextUp.lua

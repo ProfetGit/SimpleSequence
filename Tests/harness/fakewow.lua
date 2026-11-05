@@ -247,11 +247,11 @@ function Frame:AddDoubleLine(...) end
 function Frame:ClearLines() end
 
 local SPELLS = {
-    [1] = { name = "Fireball", icon = 135810 },
-    [2] = { name = "Pyroblast", icon = 135808 },
-    [3] = { name = "Ice Block", icon = 135841 },
-    [4] = { name = "Blink", icon = 135736 },
-    [5] = { name = "Fire Blast", icon = 135807 },
+    [1] = { name = "Fireball", icon = 135810, cd = 0, gcd = 1500 },
+    [2] = { name = "Pyroblast", icon = 135808, cd = 10000, gcd = 1500 },
+    [3] = { name = "Ice Block", icon = 135841, cd = 24000, gcd = 1500 },
+    [4] = { name = "Blink", icon = 135736, cd = 15000, gcd = 0 },
+    [5] = { name = "Fire Blast", icon = 135807, cd = 8000, gcd = 1500 },
 }
 H.SPELLS = SPELLS
 
@@ -341,6 +341,9 @@ function H.install(env)
     G.UnitGUID = function() return "Player-1-1" end
     G.UnitExists = function() return true end
     G.UnitAffectingCombat = function() return false end
+
+    G.GetSpellBaseCooldown = function(id) local s = SPELLS[id]; return s and s.cd or 0, s and s.gcd or 1500 end
+    G.UnitSpellHaste = function() return 0 end
 
     G.C_Spell = {
         GetSpellName = function(id) local s = SPELLS[id]; return s and s.name end,
