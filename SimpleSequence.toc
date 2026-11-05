@@ -2,7 +2,7 @@
 ## Title: SimpleSequence
 ## Notes: Build spell sequences by drag and drop. One key, whole rotation.
 ## Author: emppu
-## Version: 0.2.0
+## Version: 0.3.0
 ## SavedVariables: SimpleSequenceDB
 ## IconTexture: Interface\AddOns\SimpleSequence\Media\Icon64
 ## AddonCompartmentFunc: SimpleSequence_OnCompartmentClick

@@ -48,6 +48,7 @@ Theme.colors = {
     TOAST_BG = { 0.065, 0.051, 0.041, 0.96 },
     BANNER_BG = { 0.30, 0.20, 0.10, 0.92 },
     DROP_MARK = { 0.91, 0.75, 0.48, 0.85 },
+    NO_POWER = { 0.45, 0.55, 1, 1 },
 }
 -- Shared immutable gradient endpoints; allocated once, never during progress updates.
 Theme.ringShadeBottom = CreateColor(0.55, 0.55, 0.55, 1)

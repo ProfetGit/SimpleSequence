@@ -90,6 +90,12 @@ local function onPressed(btn, _, down)
     SS:Fire("SEQUENCE_PRESSED", btn.ssId)
 end
 
+local function onAttribute(btn, name)
+    if name == "ss-index" and btn.ssId then
+        SS:Fire("SEQUENCE_ADVANCED", btn.ssId)
+    end
+end
+
 local function getButton(id)
     local btn = buttons[id]
     if btn then
@@ -105,6 +111,7 @@ local function getButton(id)
     btn:SetAttribute("ss-index", 1)
     SecureHandlerWrapScript(btn, "OnClick", ensureHeader(), PRE)
     btn:HookScript("OnClick", onPressed)
+    btn:HookScript("OnAttributeChanged", onAttribute)
     buttons[id] = btn
     order[#order + 1] = id
     header:SetFrameRef("b" .. #order, btn)
@@ -235,6 +242,14 @@ end
 function Engine:GetNextIndex(id)
     local btn = buttons[id]
     return btn and btn:GetAttribute("ss-index") or 1
+end
+
+function Engine:GetProgress(id)
+    local btn = buttons[id]
+    if not btn then return nil end
+    local count = btn:GetAttribute("ss-count") or 0
+    if count < 1 then return nil end
+    return btn:GetAttribute("ss-index") or 1, count, btn:GetAttribute("ss-loopstart") or 1
 end
 
 function Engine:GetNextEntry(id)

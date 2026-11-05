@@ -123,10 +123,21 @@ function Editor:AddEntry(entry)
     if not ok then self.flash = nil end
 end
 
+local CAPTURE_TIMEOUT = 10
+
+local function stopListening()
+    if capture.timer then
+        capture.timer:Cancel()
+        capture.timer = nil
+    end
+    capture:UnregisterEvent("GLOBAL_MOUSE_DOWN")
+end
+
 local function cancelCapture()
     if capture and capture.active then
         capture.active = false
         capture:EnableKeyboard(false)
+        stopListening()
         Editor:RefreshTopBar()
     end
 end
@@ -171,10 +182,15 @@ local function chooseKey(id, key)
 end
 
 local function onCaptureKey(self, key)
+    if not self.active then
+        self:EnableKeyboard(false)
+        return
+    end
     if MODIFIER_KEYS[key] then return end
     local id = Editor.id
     self.active = false
     self:EnableKeyboard(false)
+    stopListening()
     Editor:RefreshTopBar()
     if key == "ESCAPE" or not id then return end
     if key == "BACKSPACE" or key == "DELETE" then
@@ -188,6 +204,8 @@ local function startCapture()
     if not Editor.id then return end
     capture.active = true
     capture:EnableKeyboard(true)
+    capture:RegisterEvent("GLOBAL_MOUSE_DOWN")
+    capture.timer = C_Timer.NewTimer(CAPTURE_TIMEOUT, cancelCapture)
     Editor:RefreshTopBar()
 end
 
@@ -953,7 +971,6 @@ end
 
 local function buildKeyboard(root)
     local undo = CreateFrame("Frame", nil, root)
-    undo:EnableKeyboard(false)
     undo:SetScript("OnKeyDown", function(self, key)
         if InCombatLockdown() then return end
         local typing = GetCurrentKeyBoardFocus and GetCurrentKeyBoardFocus()
@@ -965,12 +982,17 @@ local function buildKeyboard(root)
             self:SetPropagateKeyboardInput(true)
         end
     end)
+    undo:EnableKeyboard(false)
     Editor.undoFrame = undo
 
     capture = CreateFrame("Frame", nil, root)
-    capture:EnableKeyboard(false)
     capture:SetScript("OnKeyDown", onCaptureKey)
+    capture:EnableKeyboard(false)
     capture:SetScript("OnHide", cancelCapture)
+    capture:SetScript("OnEvent", function()
+        local keyButton = Editor.keyButton
+        if not (keyButton and keyButton:IsMouseOver()) then cancelCapture() end
+    end)
 end
 
 function Editor:Build(parent)

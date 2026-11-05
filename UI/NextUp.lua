@@ -8,6 +8,7 @@ local SIZE, ICON_INSET = 36, 2
 local MIN_SCALE, MAX_SCALE, SCALE_STEP = 0.6, 2.0, 0.2
 local UNKNOWN_ICON = 134400
 local PULSE_TIME = 0.12
+local CHECK_EVERY = 0.2
 
 local VALID_POINTS = {
     CENTER = true, TOP = true, BOTTOM = true, LEFT = true, RIGHT = true,
@@ -62,6 +63,81 @@ local function hideForGood()
     SS:Print("Show it again with /seq nextup")
 end
 
+local function plain(value)
+    if issecretvalue and issecretvalue(value) then return nil end
+    return value
+end
+
+local function itemFor(entry)
+    if entry.kind == "item" then return entry.id end
+    if entry.kind == "slot" then return GetInventoryItemID("player", entry.id) end
+    return nil
+end
+
+local function updateCooldown()
+    local cd = frame.cd
+    local entry = frame.entry
+    if not entry then
+        cd:Clear()
+        return
+    end
+    if entry.kind == "spell" or entry.kind == "pet" then
+        if C_Spell.GetSpellCooldownDuration and cd.SetCooldownFromDurationObject then
+            local ok, duration = pcall(C_Spell.GetSpellCooldownDuration, entry.id)
+            if ok and duration and pcall(cd.SetCooldownFromDurationObject, cd, duration) then return end
+        end
+        local ok, info = pcall(C_Spell.GetSpellCooldown, entry.id)
+        if ok and info and pcall(cd.SetCooldown, cd, info.startTime, info.duration) then return end
+    else
+        local itemID = itemFor(entry)
+        if itemID then
+            local ok, start, duration = pcall(C_Item.GetItemCooldown, itemID)
+            if ok and start and pcall(cd.SetCooldown, cd, start, duration) then return end
+        end
+    end
+    cd:Clear()
+end
+
+local function updateTint()
+    local entry = frame.entry
+    local icon = frame.icon
+    local usable, noPower, inRange = true, false, nil
+    if entry and (entry.kind == "spell" or entry.kind == "pet") then
+        local ok, isUsable, insufficient = pcall(C_Spell.IsSpellUsable, entry.id)
+        if ok then
+            usable = plain(isUsable) ~= false
+            noPower = plain(insufficient) == true
+        end
+        if UnitExists("target") then
+            local okRange, result = pcall(C_Spell.IsSpellInRange, entry.id, "target")
+            if okRange then inRange = plain(result) end
+        end
+    end
+    if inRange == false then
+        icon:SetVertexColor(unpack(Theme.colors.TEXT_ERROR))
+    elseif noPower then
+        icon:SetVertexColor(unpack(Theme.colors.NO_POWER))
+    else
+        icon:SetVertexColor(1, 1, 1, 1)
+    end
+    icon:SetDesaturated(not usable and not noPower)
+end
+
+local function updateCounter(id)
+    local index, count, loopStart = SS.Engine:GetProgress(id)
+    if not index then
+        frame.counter:SetText("")
+        return
+    end
+    if index < loopStart then
+        frame.counter:SetText(index .. "/" .. (loopStart - 1))
+        Theme:Color(frame.counter, "TEXT_WARNING", true)
+    else
+        frame.counter:SetText((index - loopStart + 1) .. "/" .. (count - loopStart + 1))
+        Theme:Color(frame.counter, "TEXT_HIGHLIGHT", true)
+    end
+end
+
 local function showTooltip(widget)
     local id = currentId()
     local entry = id and SS.Engine:GetNextEntry(id)
@@ -103,6 +179,19 @@ local function build()
     frame.icon:SetPoint("TOPLEFT", ICON_INSET, -ICON_INSET)
     frame.icon:SetPoint("BOTTOMRIGHT", -ICON_INSET, ICON_INSET)
     frame.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    frame.cd = CreateFrame("Cooldown", nil, frame, "CooldownFrameTemplate")
+    frame.cd:SetAllPoints(frame.icon)
+    frame.cd:SetDrawEdge(false)
+    frame.counter = Theme:Text(frame, "", "small", "TEXT_HIGHLIGHT")
+    frame.counter:SetParent(frame.cd)
+    frame.counter:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -2, 2)
+    frame.elapsed = 0
+    frame:SetScript("OnUpdate", function(widget, elapsed)
+        widget.elapsed = widget.elapsed + elapsed
+        if widget.elapsed < CHECK_EVERY then return end
+        widget.elapsed = 0
+        updateTint()
+    end)
     frame.pulse = frame.icon:CreateAnimationGroup()
     local pulse = frame.pulse:CreateAnimation("Alpha")
     pulse:SetFromAlpha(0.35)
@@ -142,6 +231,10 @@ function NextUp:Refresh()
     local entry = SS.Engine:GetNextEntry(id)
     local icon = entry and SS.Compiler.EntryIcon(entry)
     frame.icon:SetTexture(icon or UNKNOWN_ICON)
+    frame.entry = entry
+    updateCooldown()
+    updateTint()
+    updateCounter(id)
     if not frame:IsShown() then
         frame:Show()
     else
@@ -174,5 +267,15 @@ end
 
 SS:On("LOGIN", function() NextUp:Init() end)
 SS:On("SEQUENCE_PRESSED", function() NextUp:Refresh() end)
+SS:On("SEQUENCE_ADVANCED", function(id)
+    if id == currentId() and frame and frame:IsShown() then NextUp:Refresh() end
+end)
+
+local function cooldownChanged()
+    if frame and frame:IsShown() then updateCooldown() end
+end
+
+SS:RegisterGameEvent("SPELL_UPDATE_COOLDOWN", cooldownChanged)
+SS:RegisterGameEvent("BAG_UPDATE_COOLDOWN", cooldownChanged)
 SS:On("SEQUENCES_CHANGED", function() NextUp:Refresh() end)
 SS:On("SPEC_CHANGED", function() NextUp:Refresh() end)

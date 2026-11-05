@@ -59,14 +59,29 @@ local function fire(self, script, ...)
 end
 H.fireScript = fire
 
-function Frame:SetScript(name, fn) self.__scripts[name] = fn end
+function Frame:SetScript(name, fn)
+    self.__scripts[name] = fn
+    if fn and (name == "OnKeyDown" or name == "OnKeyUp") then rawset(self, "__keyboard", true) end
+end
+function Frame:EnableKeyboard(on) rawset(self, "__keyboard", on and true or false) end
+function Frame:IsKeyboardEnabled() return rawget(self, "__keyboard") == true end
+function H.pressKey(key)
+    for _, f in ipairs(H.frames) do
+        if rawget(f, "__keyboard") and f:IsVisible() and f.__scripts.OnKeyDown then
+            f.__scripts.OnKeyDown(f, key)
+        end
+    end
+end
 function Frame:GetScript(name) return self.__scripts[name] end
 function Frame:HookScript(name, fn)
     self.__hooks[name] = self.__hooks[name] or {}
     table.insert(self.__hooks[name], fn)
 end
 function Frame:HasScript() return true end
-function Frame:SetAttribute(k, v) self.__attrs[k] = v end
+function Frame:SetAttribute(k, v)
+    self.__attrs[k] = v
+    fire(self, "OnAttributeChanged", k, v)
+end
 function Frame:GetAttribute(k) return self.__attrs[k] end
 function Frame:SetFrameRef(k, v) self.__attrs["frameref-" .. k] = v end
 function Frame:GetFrameRef(k) return self.__attrs["frameref-" .. k] end
@@ -447,6 +462,9 @@ function H.install(env)
     G.DeleteMacro = function(i) if type(i) == "string" then i = G.GetMacroIndexByName(i) end table.remove(H.macroList, i) end
     G.GetMacroInfo = function(i) local m = H.macroList[i]; if m then return m.name, m.icon, m.body end end
     G.GetMacroBody = function(i) local m = H.macroList[i]; return m and m.body end
+    H.macroFeedback = {}
+    G.SetMacroSpell = function(i, spell) H.macroFeedback[i] = spell end
+    G.SetMacroItem = function(i, item) H.macroFeedback[i] = item end
     G.GetCursorInfo = function() if H.cursor then return unpack(H.cursor) end end
     G.ClearCursor = function() H.cursor = nil end
     G.GetCursorPosition = function() return 400, 300 end

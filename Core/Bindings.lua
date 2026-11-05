@@ -1,4 +1,4 @@
-local _, SS = ...
+local addonName, SS = ...
 
 local Bindings = {}
 SS.Bindings = Bindings
@@ -6,6 +6,7 @@ SS.Bindings = Bindings
 local MACRO_NAME_MAX = 16
 local DEFAULT_ICON = 134400
 local UNDO_GRACE = 60
+local liveIcons = true
 local owner = CreateFrame("Frame")
 local needsApply = false
 local macroQueue = {}
@@ -21,12 +22,39 @@ local function macroBody(id)
     return "#showtooltip\n/click " .. SS.Engine:ButtonName(id) .. " LeftButton true"
 end
 
+-- The question-mark icon lets the action button show whatever SetMacroSpell points at.
 local function macroIcon(seq)
-    if seq.icon then
-        return seq.icon
-    end
-    local first = seq.loop and seq.loop[1]
+    if seq.icon then return seq.icon end
+    if liveIcons then return DEFAULT_ICON end
+    local first = (seq.loop and seq.loop[1]) or (seq.opener and seq.opener[1])
     return first and SS.Compiler.EntryIcon(first.entry) or DEFAULT_ICON
+end
+
+local function showNextOnMacro(id)
+    if not liveIcons then return end
+    local seq = SS.Database:GetSequence(id)
+    if not seq or not seq.macroName or seq.specID ~= SS.currentSpec then return end
+    local index = GetMacroIndexByName(seq.macroName)
+    if not index or index == 0 then return end
+    local entry = SS.Engine:GetNextEntry(id)
+    if not entry then return end
+    local kind = entry.kind
+    if kind == "spell" or kind == "pet" then
+        local name = C_Spell.GetSpellName(entry.id)
+        if name then pcall(SetMacroSpell, index, name) end
+    elseif kind == "item" then
+        pcall(SetMacroItem, index, "item:" .. entry.id)
+    elseif kind == "slot" then
+        local itemID = GetInventoryItemID("player", entry.id)
+        if itemID then pcall(SetMacroItem, index, "item:" .. itemID) end
+    end
+end
+Bindings.ShowNextOnMacro = showNextOnMacro
+
+local function showNextOnAllMacros()
+    for _, seq in ipairs(SS.Database:GetSequences(SS.currentSpec)) do
+        showNextOnMacro(seq.id)
+    end
 end
 
 -- A name is taken if any macro has it, unless it is this sequence's own macro.
@@ -123,6 +151,7 @@ function Bindings:EnsureMacro(seq)
         local name = uniqueMacroName(seq)
         local newIndex = EditMacro(index, name, icon, body)
         seq.macroName = name
+        showNextOnMacro(seq.id)
         return newIndex or GetMacroIndexByName(name)
     end
 
@@ -137,6 +166,7 @@ function Bindings:EnsureMacro(seq)
         return nil, "Could not create the macro. Delete one in /macro and try again."
     end
     seq.macroName = name
+    showNextOnMacro(seq.id)
     return created
 end
 
@@ -211,11 +241,37 @@ end
 SS:On("LOGIN", function()
     Bindings:ApplyAll()
     warnIfDataLost()
+    C_Timer.After(1, function()
+        if InCombatLockdown() then
+            showNextOnAllMacros()
+            return
+        end
+        for _, seq in ipairs(SS.Database:GetSequences(SS.currentSpec)) do
+            refreshMacro(seq.id)
+        end
+    end)
 end)
 
 SS:On("SPEC_CHANGED", function()
     Bindings:ApplyAll()
+    showNextOnAllMacros()
 end)
+
+SS:On("SEQUENCE_ADVANCED", showNextOnMacro)
+
+local function stopLiveIcons(_, culprit, fn)
+    if culprit ~= addonName or type(fn) ~= "string" or not fn:find("SetMacro", 1, true) then return end
+    if not liveIcons then return end
+    liveIcons = false
+    SS:Print("This version of the game blocks changing macro icons during combat, so action-bar icons stay fixed for this session.")
+    for id, seq in pairs(SS.db.sequences) do
+        if seq.macroName then macroQueue[id] = true end
+    end
+    if not InCombatLockdown() then flush() end
+end
+
+SS:RegisterGameEvent("ADDON_ACTION_BLOCKED", stopLiveIcons)
+SS:RegisterGameEvent("ADDON_ACTION_FORBIDDEN", stopLiveIcons)
 
 SS:On("SEQUENCES_CHANGED", function()
     Bindings:ApplyAll()
