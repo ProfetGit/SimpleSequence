@@ -85,6 +85,7 @@ local function sanitizeStep(step)
     if isWholeNumber(step.every) and step.every >= 2 and step.every <= SS.MAX_EVERY then
         clean.every = step.every
     end
+    clean.waitFor = sanitizeEntry(step.waitFor, false)
     if type(step.mods) == "table" then
         for _, mod in ipairs(MOD_KEYS) do
             local modEntry = sanitizeEntry(step.mods[mod], false)
@@ -95,6 +96,17 @@ local function sanitizeStep(step)
     end
     return clean
 end
+
+-- An every-press entry, optionally paired with the kept-up buff it uses up.
+local function sanitizeExtra(entry)
+    local clean = sanitizeEntry(entry, false)
+    if clean and (clean.kind == "spell" or clean.kind == "pet") and type(entry.buff) == "table" then
+        local buff = sanitizeEntry(entry.buff, false)
+        if buff and (buff.kind == "spell" or buff.kind == "pet") then clean.buff = buff end
+    end
+    return clean
+end
+Database.SanitizeExtra = sanitizeExtra
 
 local function sanitizeList(list, max, sanitizer)
     local out = {}
@@ -120,7 +132,8 @@ function Database:SanitizeSequence(raw)
         name = cleanString(raw.name, MAX_NAME) or "Imported sequence",
         opener = sanitizeList(raw.opener, SS.MAX_STEPS, sanitizeStep),
         loop = sanitizeList(raw.loop, SS.MAX_STEPS, sanitizeStep),
-        extras = sanitizeList(raw.extras, SS.MAX_EXTRAS, function(e) return sanitizeEntry(e, false) end),
+        extras = sanitizeList(raw.extras, SS.MAX_EXTRAS, sanitizeExtra),
+        spamProof = raw.spamProof == true,
         startAttack = raw.startAttack == true,
         autoTarget = raw.autoTarget ~= false,
         priority = sanitizeList(raw.priority, SS.MAX_PRIORITY, function(e) return sanitizeEntry(e, false) end),
@@ -145,6 +158,7 @@ local function newSequenceBody(name)
         opener = {},
         loop = {},
         extras = {},
+        spamProof = false,
         startAttack = false,
         autoTarget = true,
         priority = {},
@@ -163,6 +177,7 @@ local function normalizeSequence(seq, id)
     if seq.reset.combat == nil then seq.reset.combat = true end
     seq.startAttack = seq.startAttack == true
     seq.autoTarget = seq.autoTarget ~= false
+    seq.spamProof = seq.spamProof == true
     seq.priority = type(seq.priority) == "table" and seq.priority or {}
 end
 
@@ -562,6 +577,23 @@ function Database:SetStepEvery(id, section, index, every)
     end, "Change how often")
 end
 
+function Database:SetStepWait(id, section, index, entry)
+    if not isSection(section) then return false end
+    local clean
+    if entry ~= nil then
+        clean = sanitizeEntry(entry, false)
+        if not clean then return false end
+    end
+    return self:Update(id, function(seq)
+        local step = seq[section][index]
+        if not step then return false end
+        local old = step.waitFor
+        if old == nil and clean == nil then return false end
+        if old and clean and old.kind == clean.kind and old.id == clean.id then return false end
+        step.waitFor = clean
+    end, "Change wait")
+end
+
 function Database:SetStepMod(id, section, index, mod, entry)
     if not isSection(section) then return false end
     if mod ~= "shift" and mod ~= "ctrl" and mod ~= "alt" then return false end
@@ -661,32 +693,39 @@ end
 
 function Database:ApplyBuild(id, plan)
     if type(plan) ~= "table" or not plan.ok then return false end
-    local function steps(list, max)
+    local function steps(list, waits, max)
         local out = {}
-        for _, entry in ipairs(list or {}) do
+        for i, entry in ipairs(list or {}) do
             local clean = sanitizeEntry(entry, false)
-            if clean and #out < max then out[#out + 1] = newStep(clean) end
+            if clean and #out < max then
+                local step = newStep(clean)
+                step.waitFor = waits and sanitizeEntry(waits[i], false) or nil
+                out[#out + 1] = step
+            end
         end
         return out
     end
-    local opener, loop = steps(plan.opener, SS.MAX_STEPS), steps(plan.loop, SS.MAX_STEPS)
-    if #loop == 0 then return false end
+    local opener = steps(plan.opener, plan.openerWaits, SS.MAX_STEPS)
+    local loop = steps(plan.loop, plan.loopWaits, SS.MAX_STEPS)
     local extras = {}
     for _, entry in ipairs(plan.extras or {}) do
-        local clean = sanitizeEntry(entry, false)
+        local clean = sanitizeExtra(entry)
         if clean and #extras < SS.MAX_EXTRAS then extras[#extras + 1] = clean end
     end
+    if #loop == 0 and #extras == 0 then return false end
     local autoAttack = plan.autoAttack == true
+    local spamProof = plan.spamProof == true
     return self:Update(id, function(seq)
         seq.opener, seq.loop, seq.extras = opener, loop, extras
         if autoAttack then seq.startAttack = true end
+        seq.spamProof = spamProof
     end, "Build sequence")
 end
 
 function Database:SetFlag(id, path, value)
     value = value and true or false
     return self:Update(id, function(seq)
-        if path == "startAttack" or path == "autoTarget" then
+        if path == "startAttack" or path == "autoTarget" or path == "spamProof" then
             if seq[path] == value then return false end
             seq[path] = value
         elseif path == "reset.combat" or path == "reset.target" then

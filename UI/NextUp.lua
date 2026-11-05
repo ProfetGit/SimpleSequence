@@ -9,6 +9,7 @@ local MIN_SCALE, MAX_SCALE, SCALE_STEP = 0.6, 2.0, 0.2
 local UNKNOWN_ICON = 134400
 local PULSE_TIME = 0.12
 local CHECK_EVERY = 0.2
+local GATE_SIZE = 16
 
 local VALID_POINTS = {
     CENTER = true, TOP = true, BOTTOM = true, LEFT = true, RIGHT = true,
@@ -78,7 +79,7 @@ end
 
 local function updateCooldown()
     local cd = frame.cd
-    local entry = frame.entry
+    local entry = frame.gate or frame.entry
     if not entry then
         cd:Clear()
         return
@@ -162,6 +163,12 @@ local function showTooltip(widget)
     end
     local seq = SS.Database:GetSequence(id)
     local r, g, b = unpack(Theme.colors.TEXT_MUTED)
+    local gate = SS.Engine:GetNextWait(id)
+    if gate then
+        local wr, wg, wb = unpack(Theme.colors.TEXT_WARNING)
+        GameTooltip:AddLine("Wait for " .. (SS.Compiler.EntryName(gate) or "the other spell")
+            .. ": the sweep shows its cooldown.", wr, wg, wb, true)
+    end
     GameTooltip:AddLine("Next press of " .. (seq and seq.name or "your sequence"), r, g, b)
     GameTooltip:AddLine("Move it in Edit Mode, or Shift-drag it. Right-click for options.", r, g, b, true)
     GameTooltip:Show()
@@ -185,6 +192,11 @@ local function build()
     frame.cd = CreateFrame("Cooldown", nil, frame, "CooldownFrameTemplate")
     frame.cd:SetAllPoints(frame.icon)
     frame.cd:SetDrawEdge(false)
+    frame.gateIcon = frame.cd:CreateTexture(nil, "OVERLAY")
+    frame.gateIcon:SetSize(GATE_SIZE, GATE_SIZE)
+    frame.gateIcon:SetPoint("TOPLEFT", frame, "TOPLEFT", -GATE_SIZE / 3, GATE_SIZE / 3)
+    frame.gateIcon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    frame.gateIcon:Hide()
     frame.counter = Theme:Text(frame, "", "small", "TEXT_HIGHLIGHT")
     frame.counter:SetParent(frame.cd)
     frame.counter:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -2, 2)
@@ -261,6 +273,8 @@ function NextUp:Refresh()
         local entry = previewEntry()
         frame.icon:SetTexture((entry and SS.Compiler.EntryIcon(entry)) or Theme.icons.app)
         frame.entry = entry
+        frame.gate = nil
+        frame.gateIcon:Hide()
         frame.counter:SetText("")
         updateCooldown()
         updateTint()
@@ -275,6 +289,11 @@ function NextUp:Refresh()
     local icon = entry and SS.Compiler.EntryIcon(entry)
     frame.icon:SetTexture(icon or UNKNOWN_ICON)
     frame.entry = entry
+    local gate = SS.Engine:GetNextWait(id)
+    frame.gate = gate
+    local gateTexture = gate and SS.Compiler.EntryIcon(gate)
+    frame.gateIcon:SetTexture(gateTexture)
+    frame.gateIcon:SetShown(gateTexture ~= nil)
     updateCooldown()
     updateTint()
     updateCounter(id)

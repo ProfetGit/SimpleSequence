@@ -6,12 +6,14 @@ SS.StepPopover = StepPopover
 
 local FRAME_NAME = "SimpleSequenceStepPopover"
 local WIDTH, PAD = 288, 14
+local HELP_SPACE = 72
 local SLOT = 28
 local ICON_CROP = 0.08
 local MODS = {
     { key = "shift", label = "Hold Shift for:" },
     { key = "ctrl", label = "Hold Ctrl for:" },
     { key = "alt", label = "Hold Alt for:" },
+    { key = "wait", label = "Wait for:" },
 }
 local TARGETS = {
     { value = "target", text = "Target" },
@@ -31,7 +33,8 @@ local OFTEN_TEXT = {}
 for _, option in ipairs(OFTEN) do OFTEN_TEXT[option.value] = option.text end
 local OFTEN_HEIGHT = 40
 
-local HELP = "Modifiers let one button do two jobs: hold Shift to cast the other spell instead."
+local HELP = "Modifiers let one button do two jobs: hold Shift to cast the other spell instead. "
+    .. "Wait for shows another spell's cooldown on the next-up icon, for a press that must wait for it."
 
 local frame, state
 
@@ -50,9 +53,16 @@ local function entryIcon(entry)
     return entry and SS.Compiler and SS.Compiler.EntryIcon(entry) or Theme.assets.unknownItem.file
 end
 
+local function saveSlot(id, section, index, mod, entry)
+    if mod == "wait" then
+        return SS.Database:SetStepWait(id, section, index, entry)
+    end
+    return SS.Database:SetStepMod(id, section, index, mod, entry)
+end
+
 local function setMod(mod, entry)
     if not state then return end
-    SS.Database:SetStepMod(state.id, state.section, state.index, mod, entry)
+    saveSlot(state.id, state.section, state.index, mod, entry)
 end
 
 local function buildSlot(parent, mod)
@@ -213,7 +223,7 @@ local function build()
         frame.rows[i] = row
     end
 
-    local helpTop = rowTop + 3 * 36 + 4
+    local helpTop = rowTop + #MODS * 36 + 4
     frame.help = Theme:Text(frame, HELP, "small", "TEXT_MUTED")
     frame.help:SetPoint("TOPLEFT", frame.body, "TOPLEFT", PAD, -helpTop)
     frame.help:SetWidth(WIDTH - PAD * 2)
@@ -221,8 +231,8 @@ local function build()
     frame.help:SetJustifyV("TOP")
 
     local line2 = Theme:Divider(frame)
-    line2:SetPoint("TOPLEFT", frame.body, "TOPLEFT", PAD, -(helpTop + 44))
-    line2:SetPoint("TOPRIGHT", frame.body, "TOPRIGHT", -PAD, -(helpTop + 44))
+    line2:SetPoint("TOPLEFT", frame.body, "TOPLEFT", PAD, -(helpTop + HELP_SPACE))
+    line2:SetPoint("TOPRIGHT", frame.body, "TOPRIGHT", -PAD, -(helpTop + HELP_SPACE))
 
     frame.remove = Theme:ListButton(frame, WIDTH - PAD * 2, 26, "Remove step", function()
         if not state then return end
@@ -234,8 +244,8 @@ local function build()
             SS.Database:RemoveStep(id, section, index)
         end
     end)
-    frame.remove:SetPoint("TOPLEFT", frame.body, "TOPLEFT", PAD, -(helpTop + 52))
-    frame.bodyHeight = helpTop + 52 + 26 + PAD
+    frame.remove:SetPoint("TOPLEFT", frame.body, "TOPLEFT", PAD, -(helpTop + HELP_SPACE + 8))
+    frame.bodyHeight = helpTop + HELP_SPACE + 8 + 26 + PAD
     frame:SetHeight(frame.baseHeight + frame.bodyHeight)
 
     frame:SetScript("OnShow", function(self)
@@ -283,7 +293,7 @@ function StepPopover:Update()
     frame:SetHeight(frame.baseHeight + offset + frame.bodyHeight)
     local mods = step.mods or {}
     for _, row in ipairs(frame.rows) do
-        local entry = mods[row.mod]
+        local entry = row.mod == "wait" and step.waitFor or mods[row.mod]
         local armed = isArmed(row.mod)
         row.slot.entryName = entry and entryName(entry) or nil
         if entry then
@@ -334,7 +344,7 @@ function StepPopover:ConsumeArmed(entry)
         self:Update()
         return false
     end
-    SS.Database:SetStepMod(armed.id, armed.section, armed.index, armed.mod, entry)
+    saveSlot(armed.id, armed.section, armed.index, armed.mod, entry)
     return true
 end
 

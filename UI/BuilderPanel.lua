@@ -25,7 +25,7 @@ local DOT = " \194\183 "
 
 local HELP = "Put your spells in order of importance, most important first. SimpleSequence reads each spell's "
     .. "cooldown and works out how often it fits. Spells that don't use the global cooldown, and trinkets, go to Every press."
-local FOOTNOTE = "Made for pressing once per global cooldown: press when the next-up icon is ready, rather than spamming the key."
+local FOOTNOTE = "Mash the key as much as you like: each spell in the loop waits until it's ready, and nothing gets skipped."
 local ROW_HINT = "Drag to reorder" .. DOT .. "Right-click to remove"
 
 local ROLE_TONE = { loop = "TEXT_ACTIVE", extras = "TEXT_ACTIVE", unused = "TEXT_WARNING", error = "TEXT_WARNING", opener = "TEXT_ACTIVE" }

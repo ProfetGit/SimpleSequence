@@ -146,20 +146,20 @@ function Builder.Simulate(spells, gcd, round)
         return nil
     end
 
-    local order, seen, waits = {}, {}, {}
+    local order, seen, waits, gates = {}, {}, {}, {}
     local parts = {}
     for press = 1, SS.MAX_STEPS * 2 + 1 do
         for i = 1, n do parts[i] = charges[i] .. ":" .. remaining[i] end
         local key = table.concat(parts, ",")
         if seen[key] then
             return {
-                order = order, waits = waits, loopStart = seen[key], count = press - 1,
+                order = order, waits = waits, gates = gates, loopStart = seen[key], count = press - 1,
                 recharge = recharge, rounded = steps ~= nil,
             }
         end
         seen[key] = press
 
-        local waited = 0
+        local waited, gate = 0, nil
         fireOffGCD()
         local pick = pickMain()
         while not pick do
@@ -169,12 +169,14 @@ function Builder.Simulate(spells, gcd, round)
             end
             if not soonest then return nil end
             waited = waited + remaining[soonest]
+            gate = soonest
             advance(remaining[soonest])
             fireOffGCD()
             pick = pickMain()
         end
         order[press] = pick
         waits[press] = waited
+        if gate and gate ~= pick then gates[press] = gate end
         use(pick)
         advance(castSlots[pick])
     end
@@ -374,10 +376,14 @@ function Builder:Plan(priority)
     local gcd = self:GetGCD(baseGCD)
     plan.gcd = gcd
 
-    local sim, simIndex, openerOnly = {}, {}, {}
-    local function addExtra(item, detail)
+    -- Forever lets only the first global-cooldown spell of a press try to cast, so a
+    -- global-cooldown spell in Every press would block the rest. Those that must not
+    -- repeat go to the opener; the loop becomes one cast sequence that waits for each
+    -- spell instead of skipping it.
+    local sim, openerOnly = {}, {}
+    local function addExtra(item, entry, detail)
         if #plan.extras < SS.MAX_EXTRAS then
-            plan.extras[#plan.extras + 1] = item.info.entry
+            plan.extras[#plan.extras + 1] = entry
             item.row.role, item.row.note, item.row.detail = "extras", "Every press", detail
             return true
         end
@@ -385,114 +391,96 @@ function Builder:Plan(priority)
         item.row.detail = "Every press is full (" .. SS.MAX_EXTRAS .. " spells)."
         return false
     end
+    local function toOpener(item, detail)
+        openerOnly[#openerOnly + 1] = item
+        item.row.role, item.row.note, item.row.detail = "opener", "Start of fight", detail
+    end
+    local paired = {}
     for _, item in ipairs(items) do
         local info = item.info
-        if info.buff then
-            if not item.consumedBy and math.floor(info.buff / gcd) > LONG_COOLDOWN_SLOTS then
-                openerOnly[#openerOnly + 1] = item
-                item.row.role, item.row.note = "opener", "Start of fight"
-                item.row.detail = "Lasts " .. timeText(info.buff) .. ", so it's cast once at the start of each fight."
-            else
-                sim[#sim + 1] = item
+        local partner = item.consumes or item.consumedBy
+        if partner then
+            if not paired[item] then
+                local consumer = item.consumes and item or partner
+                local buff = item.consumedBy and item or partner
+                paired[consumer], paired[buff] = true, true
+                local entry = { kind = consumer.info.entry.kind, id = consumer.info.entry.id, buff = buff.info.entry }
+                if addExtra(consumer, entry, "Fires as soon as it's ready, then " .. buff.info.name
+                    .. " is recast right after it.") then
+                    buff.row.role, buff.row.note = "extras", "Kept up"
+                    buff.row.detail = "Cast first, then recast each time " .. consumer.info.name
+                        .. " uses it up, however fast you press."
+                else
+                    buff.row.role, buff.row.note = "unused", "Not used"
+                    buff.row.detail = consumer.row.detail
+                end
             end
+        elseif info.buff then
+            toOpener(item, "Cast once at the start of each fight. It lasts " .. timeText(info.buff)
+                .. (info.buff < 120 and ", so in a longer fight you may need to recast it yourself." or "."))
         elseif info.extra then
-            local detail = "Doesn't use the global cooldown, so it fires on any press when it's ready."
-            if item.consumes then
-                detail = "Fires on any press when it's ready. It uses up " .. item.consumes.info.name
-                    .. ", which is recast right after."
-            end
-            if addExtra(item, detail) and item.consumes then sim[#sim + 1] = item end
+            addExtra(item, info.entry, "Doesn't use the global cooldown, so it fires on any press when it's ready.")
         elseif slots(info.castTime + info.cooldown, gcd) > LONG_COOLDOWN_SLOTS then
-            addExtra(item, "Long cooldown, so it fires on any press when it's ready.")
+            toOpener(item, "Long cooldown, so it's cast once at the start of each fight.")
         else
             sim[#sim + 1] = item
         end
     end
-    local onGCD = 0
-    for _, item in ipairs(sim) do
-        if not item.info.extra then onGCD = onGCD + 1 end
+    for _, item in ipairs(openerOnly) do
+        plan.opener[#plan.opener + 1] = item.info.entry
     end
-    if onGCD == 0 and #openerOnly == 0 then
+    plan.openerWaits, plan.loopWaits = {}, {}
+    plan.spamProof = true
+    if #sim == 0 and #plan.extras == 0 and #plan.opener == 0 then
         plan.error = "Add at least one spell that uses the global cooldown."
         return plan
     end
 
-    local spells = {}
-    for i, item in ipairs(sim) do simIndex[item] = i end
-    for i, item in ipairs(sim) do
-        local info = item.info
-        spells[i] = {
-            cooldown = info.cooldown, charges = info.charges, castTime = info.castTime,
-            buff = info.buff, offGCD = info.extra or nil,
-            requires = item.consumes and simIndex[item.consumes] or nil,
-            consumes = item.consumes and simIndex[item.consumes] or nil,
-        }
-    end
-
-    for _, item in ipairs(openerOnly) do
-        plan.opener[#plan.opener + 1] = item.info.entry
-    end
-
-    local result
-    if onGCD > 0 then
-        result = Builder.Simulate(spells, gcd, false)
+    local waited = false
+    if #sim > 0 then
+        local spells = {}
+        for i, item in ipairs(sim) do
+            local info = item.info
+            spells[i] = { cooldown = info.cooldown, charges = info.charges, castTime = info.castTime }
+        end
+        local result = Builder.Simulate(spells, gcd, false)
         if not fits(result) then result = Builder.Simulate(spells, gcd, "nice") end
         if not fits(result) then result = Builder.Simulate(spells, gcd, "coarse") end
-        if not fits(result) or #plan.opener + result.loopStart - 1 > SS.MAX_STEPS then
+        if not fits(result) then
             plan.error = "These cooldowns don't line up into a loop of " .. SS.MAX_STEPS
                 .. " presses or fewer. Remove a spell or two."
             return plan
         end
-    else
-        plan.error = "Add a spell to cast between your buffs."
-        return plan
-    end
-
-    local occurrences, total, waited = {}, {}, false
-    for press, index in ipairs(result.order) do
-        local entry = sim[index].info.entry
-        total[index] = (total[index] or 0) + 1
-        if press < result.loopStart then
-            plan.opener[#plan.opener + 1] = entry
-        else
-            plan.loop[#plan.loop + 1] = entry
+        local occurrences = {}
+        for press = result.loopStart, result.count do
+            local index = result.order[press]
+            plan.loop[#plan.loop + 1] = sim[index].info.entry
             occurrences[index] = (occurrences[index] or 0) + 1
             if result.waits[press] > 0 then waited = true end
         end
-    end
-    local loopLength = #plan.loop
-    for index, item in ipairs(sim) do
-        local info = item.info
-        local recharge = result.recharge[index]
-        if not info.extra then
+        local loopLength = #plan.loop
+        for index, item in ipairs(sim) do
+            local info = item.info
+            local recharge = result.recharge[index]
             local count = occurrences[index] or 0
-            if (total[index] or 0) == 0 then
+            if count == 0 then
                 item.row.role, item.row.note = "unused", "Never cast"
                 item.row.detail = "A spell above it is always ready. Move this one higher."
-            elseif info.buff then
-                item.row.role, item.row.note = "loop", "Kept up"
-                if item.consumedBy then
-                    item.row.detail = "Recast each time " .. item.consumedBy.info.name .. " uses it up."
-                elseif count > 0 then
-                    item.row.detail = "Recast about every " .. timeText(math.floor(recharge * gcd + 0.5))
-                        .. ", before it runs out."
-                end
             else
-                item.row.role = "loop"
-                local note = count > 0 and frequencyNote(count, loopLength, recharge) or "In the opener"
-                if result.rounded and recharge > 0 then
-                    local exact = slots(info.castTime + info.cooldown, gcd)
-                    if exact ~= recharge then item.row.detail = "Rounded slightly so the loop stays short." end
+                item.row.role, item.row.note = "loop", frequencyNote(count, loopLength, recharge)
+                if result.rounded and recharge > 0 and slots(info.castTime + info.cooldown, gcd) ~= recharge then
+                    item.row.detail = "Rounded slightly so the loop stays short."
                 end
-                item.row.note = note
             end
         end
+    else
+        waited = true
     end
 
     if waited then
         plan.autoAttack = true
         plan.warnings[#plan.warnings + 1] = "There is nothing to cast between cooldowns, so auto-attack fills the gaps "
-            .. "(Start auto-attack is turned on). Press when the next-up icon is ready."
+            .. "(Start auto-attack is turned on)."
     end
     for _, row in ipairs(plan.rows) do
         if row.role == "unused" and row.note == "Never cast" then
@@ -500,13 +488,18 @@ function Builder:Plan(priority)
         end
     end
 
-    local openerLength = #plan.opener
+    local openerLength, loopLength = #plan.opener, #plan.loop
+    local parts = {}
     if openerLength > 0 then
-        plan.summary = "Opener: " .. openerLength .. (openerLength == 1 and " press" or " presses")
-            .. " \194\183 Loop: " .. loopLength .. (loopLength == 1 and " press" or " presses") .. ", then repeats"
-    else
-        plan.summary = "Loop: " .. loopLength .. (loopLength == 1 and " press" or " presses") .. ", then repeats"
+        parts[#parts + 1] = "Opener: " .. openerLength .. (openerLength == 1 and " press" or " presses")
     end
+    if loopLength > 0 then
+        parts[#parts + 1] = "Loop: " .. loopLength .. (loopLength == 1 and " spell" or " spells")
+            .. ", each waits until it's ready"
+    else
+        parts[#parts + 1] = "Loop: Every press spells and auto-attack"
+    end
+    plan.summary = table.concat(parts, " \194\183 ")
     plan.ok = true
     return plan
 end

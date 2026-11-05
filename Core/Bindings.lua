@@ -36,7 +36,7 @@ local function showNextOnMacro(id)
     if not seq or not seq.macroName or seq.specID ~= SS.currentSpec then return end
     local index = GetMacroIndexByName(seq.macroName)
     if not index or index == 0 then return end
-    local entry = SS.Engine:GetNextEntry(id)
+    local entry = SS.Engine:GetNextWait(id) or SS.Engine:GetNextEntry(id)
     if not entry then return end
     local kind = entry.kind
     if kind == "spell" or kind == "pet" then

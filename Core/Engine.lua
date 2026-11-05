@@ -87,6 +87,7 @@ end
 local function onPressed(btn, _, down)
     if not down then return end
     Engine.lastPressed = btn.ssId
+    Engine.lastPressTime = GetTime()
     SS:Fire("SEQUENCE_PRESSED", btn.ssId)
 end
 
@@ -124,6 +125,9 @@ local function blank(btn)
     btn:SetAttribute("ss-index", 1)
     btn:SetAttribute("macrotext", nil)
     btn.ssEntries = nil
+    btn.ssWaits = nil
+    btn.ssQueries = nil
+    btn.ssPairs = nil
     btn.ssTexts = nil
 end
 
@@ -157,6 +161,9 @@ local function applyNow(id)
     btn:SetAttribute("ss-index", 1)
     btn:SetAttribute("ss-count", compiled.count)
     btn.ssEntries = compiled.entries
+    btn.ssWaits = compiled.waits
+    btn.ssQueries = compiled.queries
+    btn.ssPairs = compiled.pairs
     btn.ssTexts = compiled.steps
 end
 
@@ -244,12 +251,34 @@ function Engine:GetNextIndex(id)
     return btn and btn:GetAttribute("ss-index") or 1
 end
 
+-- Where a /castsequence line stands: Blizzard keeps that state in CastSequenceManager
+-- and answers QueryCastSequence for the same text the macro runs.
+local function sequenceIndex(sequence)
+    if type(QueryCastSequence) ~= "function" then return 1 end
+    local ok, index = pcall(QueryCastSequence, sequence)
+    if ok and type(index) == "number" then return index end
+    return 1
+end
+
+local function currentIndex(btn)
+    local index = btn:GetAttribute("ss-index") or 1
+    if btn.ssEntries and btn.ssEntries[index] == nil and not (btn.ssQueries and btn.ssQueries[index]) then
+        index = btn:GetAttribute("ss-loopstart") or 1
+    end
+    return index
+end
+
 function Engine:GetProgress(id)
     local btn = buttons[id]
     if not btn then return nil end
     local count = btn:GetAttribute("ss-count") or 0
     if count < 1 then return nil end
-    return btn:GetAttribute("ss-index") or 1, count, btn:GetAttribute("ss-loopstart") or 1
+    local index, loopStart = btn:GetAttribute("ss-index") or 1, btn:GetAttribute("ss-loopstart") or 1
+    local query = btn.ssQueries and btn.ssQueries[index]
+    if query then
+        return loopStart + sequenceIndex(query.sequence) - 1, loopStart + #query.entries - 1, loopStart
+    end
+    return index, count, loopStart
 end
 
 function Engine:GetNextEntry(id)
@@ -257,8 +286,24 @@ function Engine:GetNextEntry(id)
     if not btn or not btn.ssEntries then
         return nil
     end
-    local index = btn:GetAttribute("ss-index") or 1
-    return btn.ssEntries[index] or btn.ssEntries[btn:GetAttribute("ss-loopstart") or 1]
+    for _, pair in ipairs(btn.ssPairs or {}) do
+        if sequenceIndex(pair.sequence) == 1 then return pair.buff end
+    end
+    local index = currentIndex(btn)
+    local query = btn.ssQueries and btn.ssQueries[index]
+    if query then
+        return query.entries[sequenceIndex(query.sequence)] or query.entries[1]
+    end
+    return btn.ssEntries[index]
+end
+
+-- The spell the next press has to wait for, when that is not the spell it casts.
+function Engine:GetNextWait(id)
+    local btn = buttons[id]
+    if not btn or not btn.ssWaits then
+        return nil
+    end
+    return btn.ssWaits[currentIndex(btn)]
 end
 
 function Engine:DebugLines(id)
@@ -309,6 +354,22 @@ SS:On("COMBAT_ENDED", function()
     C_Timer.After(0.2, function()
         if Engine.lastPressed then
             SS:Fire("SEQUENCE_PRESSED", Engine.lastPressed)
+        end
+    end)
+end)
+
+-- A cast sequence moves on when Blizzard sees the cast succeed; ask again on the next
+-- frame, after its own handler for the same event has run.
+local sequenceRefresh
+SS:RegisterUnitGameEvent("UNIT_SPELLCAST_SUCCEEDED", "player", function()
+    if sequenceRefresh or not Engine.lastPressed then return end
+    sequenceRefresh = true
+    C_Timer.After(0, function()
+        sequenceRefresh = nil
+        local id = Engine.lastPressed
+        local btn = id and buttons[id]
+        if btn and (btn.ssQueries and next(btn.ssQueries) or btn.ssPairs and #btn.ssPairs > 0) then
+            SS:Fire("SEQUENCE_ADVANCED", id)
         end
     end)
 end)

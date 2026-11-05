@@ -183,6 +183,44 @@ step("Edit Mode moves the next-press icon", function()
     SS.Engine.lastPressed = savedLast
     SS.NextUp:Refresh()
 end)
+step("silence not-ready errors", function()
+    H.errorsShown = {}
+    H.now = 5000
+    H.cvars.Sound_EnableErrorSpeech = "1"
+    SlashCmdList.SIMPLESEQUENCE("mute")
+    expect("option saved", SS.Settings:IsMashSilenced())
+    local mutedCount = 0
+    for _ in pairs(H.mutedSounds) do mutedCount = mutedCount + 1 end
+    expect("error sound files muted (" .. mutedCount .. ")", mutedCount == #SS.ERROR_SOUNDS and H.mutedSounds[567415])
+    expect("error frame no longer hears errors", not UIErrorsFrame.__events.UI_ERROR_MESSAGE)
+    H.dispatchEvent("UI_ERROR_MESSAGE", LE_GAME_ERR_SPELL_COOLDOWN, "Spell is not ready yet.")
+    expect("cooldown error silenced", #H.errorsShown == 0)
+    H.dispatchEvent("UI_ERROR_MESSAGE", LE_GAME_ERR_INV_FULL, "Inventory is full.")
+    expect("other errors still shown", H.errorsShown[1] == "Inventory is full.")
+    SS.Engine.lastPressTime = H.now
+    H.dispatchEvent("UI_ERROR_MESSAGE", LE_GAME_ERR_INV_FULL, "Right after a press.")
+    expect("errors right after a press silenced", #H.errorsShown == 1)
+    SlashCmdList.SIMPLESEQUENCE("debug")
+    SlashCmdList.SIMPLESEQUENCE("mute")
+    expect("error frame hears errors again", UIErrorsFrame.__events.UI_ERROR_MESSAGE == true)
+    expect("error sound files unmuted", next(H.mutedSounds) == nil)
+    H.dispatchEvent("UI_ERROR_MESSAGE", LE_GAME_ERR_SPELL_COOLDOWN, "Back on.")
+    expect("errors back when turned off", H.errorsShown[#H.errorsShown] == "Back on.")
+    expect("error speech untouched", H.cvars.Sound_EnableErrorSpeech == "1")
+    local before = #H.menus
+    SS.SequenceList.options:Click("LeftButton")
+    local log = H.menus[before + 1]
+    expect("options menu opened", log ~= nil and #log == 3)
+    if log then
+        expect("silence item is a checkbox", log[1].checked ~= nil and log[1].checked() == false)
+        log[1].fn()
+        expect("menu turns it on", SS.Settings:IsMashSilenced())
+        log[1].fn()
+        expect("menu turns it off", not SS.Settings:IsMashSilenced())
+    end
+    SS.Engine.lastPressTime = nil
+    H.now = 1000
+end)
 step("key capture does not stay armed", function()
     local kb = SS.Editor.keyButton
     local function armed() return (kb.label:GetText() or ""):find("Press a key", 1, true) ~= nil end
@@ -300,6 +338,50 @@ step("macro shows next spell", function()
     expect("feedback follows index (" .. tostring(H.macroFeedback[index]) .. " vs " .. tostring(want) .. ")",
         H.macroFeedback[index] == want)
     btn:SetAttribute("ss-index", 1)
+end)
+step("wait-for shows on next-up and macro", function()
+    local seq = DB:GetSequence(seqId)
+    expect("sequence has a loop", seq and #seq.loop > 0)
+    expect("SetStepWait ok", DB:SetStepWait(seqId, "loop", 1, spell(3)))
+    local btn = _G[SS.Engine:ButtonName(seqId)]
+    btn:SetAttribute("ss-index", #DB:GetSequence(seqId).opener + 1)
+    local gate = SS.Engine:GetNextWait(seqId)
+    expect("engine reports the wait", gate and gate.id == 3)
+    local index = GetMacroIndexByName(DB:GetSequence(seqId).macroName)
+    expect("macro shows the wait-for spell (" .. tostring(H.macroFeedback[index]) .. ")",
+        H.macroFeedback[index] == SS.Compiler.EntryName(spell(3)))
+    SS.Engine.lastPressed = seqId
+    SS.NextUp:Refresh()
+    expect("next-up shows the badge", _G.SimpleSequenceNextUp.gateIcon:IsShown())
+    DB:SetStepWait(seqId, "loop", 1, nil)
+    btn:SetAttribute("ss-index", #DB:GetSequence(seqId).opener + 1)
+    expect("wait cleared", SS.Engine:GetNextWait(seqId) == nil)
+    SS.NextUp:Refresh()
+    expect("badge hidden", not _G.SimpleSequenceNextUp.gateIcon:IsShown())
+    btn:SetAttribute("ss-index", 1)
+end)
+step("wait-for-each-spell loop follows the cast sequence", function()
+    local s = DB:Create(SS.currentSpec, "Mash test")
+    DB:InsertStep(s.id, "loop", nil, spell(1))
+    DB:InsertStep(s.id, "loop", nil, spell(2))
+    DB:InsertExtra(s.id, nil, spell(5))
+    s = DB:GetSequence(s.id)
+    s.extras[1].buff = spell(4)
+    DB:SetFlag(s.id, "spamProof", true)
+    local compiled = SS.Compiler:Compile(DB:GetSequence(s.id))
+    expect("one mash-safe press", compiled.ok and compiled.count == 1)
+    local pairSeq, loopSeq = compiled.pairs[1].sequence, compiled.queries[1].sequence
+    H.castIndex[pairSeq], H.castIndex[loopSeq] = 1, 1
+    expect("buff comes first", SS.Engine:GetNextEntry(s.id).id == 4)
+    H.castIndex[pairSeq] = 2
+    expect("then the loop's first spell", SS.Engine:GetNextEntry(s.id).id == 1)
+    H.castIndex[loopSeq] = 2
+    expect("then the loop's second spell", SS.Engine:GetNextEntry(s.id).id == 2)
+    local index, count, loopStart = SS.Engine:GetProgress(s.id)
+    expect("progress follows the sequence", index == 2 and count == 2 and loopStart == 1)
+    H.castIndex = {}
+    DB:Delete(s.id)
+    H.flushTimers()
 end)
 step("SEQUENCE_PRESSED + NextUp", function()
     SS:Fire("SEQUENCE_PRESSED", seqId)

@@ -71,6 +71,17 @@ local function verbFor(entries)
     return "/cast"
 end
 
+local CASTSEQUENCE = "/castsequence "
+local RESET = "reset=combat "
+
+-- A kept-up buff and the off-GCD spell that uses it up: the sequence only moves on
+-- when a cast succeeds, so the buff is recast right after the spell, however fast
+-- the key is pressed.
+local function pairSequence(extra)
+    return RESET .. entryArg(extra.buff) .. ", " .. entryArg(extra)
+end
+Compiler.PairSequence = pairSequence
+
 local function everyPressLines(seq)
     local lines = {}
     if seq.autoTarget then
@@ -81,7 +92,11 @@ local function everyPressLines(seq)
     end
     for _, extra in ipairs(seq.extras or {}) do
         if extra.kind ~= "emote" then
-            lines[#lines + 1] = verbFor({ extra }) .. " " .. entryArg(extra)
+            if extra.buff then
+                lines[#lines + 1] = CASTSEQUENCE .. pairSequence(extra)
+            else
+                lines[#lines + 1] = verbFor({ extra }) .. " " .. entryArg(extra)
+            end
         end
     end
     return lines
@@ -136,7 +151,7 @@ local function gcd(a, b)
 end
 
 function Compiler:Compile(seq)
-    local result = { steps = {}, entries = {}, problems = {}, ok = true }
+    local result = { steps = {}, entries = {}, waits = {}, queries = {}, pairs = {}, problems = {}, ok = true }
     local opener, loop = seq.opener or {}, seq.loop or {}
 
     local function problem(level, text)
@@ -151,6 +166,7 @@ function Compiler:Compile(seq)
         local text = self:StepText(seq, step)
         result.steps[n] = text
         result.entries[n] = step.entry
+        result.waits[n] = step.waitFor
         if repeated then return end
         local kind = step.entry and step.entry.kind
         if (kind == "spell" or kind == "pet") and not C_Spell.GetSpellName(step.entry.id) then
@@ -158,6 +174,12 @@ function Compiler:Compile(seq)
         end
         if #text > SS.MAX_STEP_TEXT then
             problem("error", "Press " .. n .. " is too long (" .. #text .. " of " .. SS.MAX_STEP_TEXT .. " characters). Remove extras or modifiers.")
+        end
+    end
+
+    for _, extra in ipairs(seq.extras or {}) do
+        if extra.buff and extra.kind ~= "emote" then
+            result.pairs[#result.pairs + 1] = { sequence = pairSequence(extra), buff = extra.buff }
         end
     end
 
@@ -172,17 +194,59 @@ function Compiler:Compile(seq)
             rounds = rounds * every / gcd(rounds, every)
         end
     end
+    local unrolled = {}
     for round = 0, rounds - 1 do
         for _, step in ipairs(loop) do
-            if round % (step.every or 1) == 0 then add(step, round > 0) end
+            if round % (step.every or 1) == 0 then unrolled[#unrolled + 1] = { step = step, repeated = round > 0 } end
         end
+    end
+    local waitEach = seq.spamProof == true and #unrolled > 0
+    if waitEach then
+        for _, item in ipairs(unrolled) do
+            if item.step.entry.kind == "emote" then
+                waitEach = false
+                problem("warn", "Emotes can't wait for each spell, so the Loop moves on with every press.")
+                break
+            end
+        end
+    end
+    if waitEach then
+        local names, entries, options = {}, {}, false
+        for _, item in ipairs(unrolled) do
+            local step = item.step
+            names[#names + 1] = entryArg(step.entry)
+            entries[#entries + 1] = step.entry
+            if (step.target and step.target ~= "target") or next(step.mods or {}) then options = true end
+            if not item.repeated and (step.entry.kind == "spell" or step.entry.kind == "pet")
+                and not C_Spell.GetSpellName(step.entry.id) then
+                problem("warn", "Loop: spell " .. tostring(step.entry.id) .. " was not found.")
+            end
+        end
+        local sequence = RESET .. table.concat(names, ", ")
+        local line = #names == 1 and (verbFor(entries) .. " " .. names[1]) or (CASTSEQUENCE .. sequence)
+        local lines = everyPressLines(seq)
+        lines[#lines + 1] = line
+        local text = table.concat(lines, "\n")
+        local n = #result.steps + 1
+        result.steps[n] = text
+        result.entries[n] = entries[1]
+        if #names > 1 then result.queries[n] = { sequence = sequence, entries = entries } end
+        if options then
+            problem("warn", "Cast on and Hold-key options in the Loop don't work while it waits for each spell.")
+        end
+        if #text > SS.MAX_STEP_TEXT then
+            problem("error", "The Loop is too long to wait for each spell (" .. #text .. " of " .. SS.MAX_STEP_TEXT
+                .. " characters). Remove some spells, or turn off waiting for each spell.")
+        end
+    else
+        for _, item in ipairs(unrolled) do add(item.step, item.repeated) end
     end
     if #loop > 0 and not everyTime then
         problem("warn", "Every Loop spell is set to \"every Nth time\". Set at least one to every time, or the timing has no effect.")
     end
     if #loop == 0 then
         local filler = table.concat(everyPressLines(seq), "\n")
-        if #opener > 0 and filler ~= "" then
+        if filler ~= "" and (#opener > 0 or #(seq.extras or {}) > 0) then
             result.steps[#result.steps + 1] = filler
         elseif #opener > 0 then
             problem("error", "After the opener there is nothing to do. Add a spell to the Loop, or tick Start auto-attack.")
@@ -222,6 +286,8 @@ function Compiler:Describe(seq)
         elseif #(seq.extras or {}) > 0 then
             parts[#parts + 1] = "then only the Every press spells"
         end
+    elseif seq.spamProof then
+        parts[#parts + 1] = "then repeats the Loop, each spell waiting until it's ready"
     elseif #opener > 0 then
         parts[#parts + 1] = "then repeats from Press " .. (#opener + 1)
     else

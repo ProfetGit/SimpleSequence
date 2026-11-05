@@ -390,7 +390,12 @@ function H.install(env)
         GetContainerItemInfo = function() return nil end,
     }
     G.C_Texture = { GetAtlasInfo = function() return nil end }
-    G.C_CVar = { GetCVar = function() return "1" end, GetCVarBool = function() return true end }
+    H.cvars = {}
+    G.C_CVar = {
+        GetCVar = function(name) return H.cvars[name] or "1" end,
+        SetCVar = function(name, value) H.cvars[name] = tostring(value); return true end,
+        GetCVarBool = function() return true end,
+    }
     G.NUM_BAG_SLOTS = 4
     G.CANCEL = "Cancel"
     G.ACCEPT = "Accept"
@@ -575,7 +580,10 @@ function H.install(env)
         function root:CreateButton(text, fn) log[#log + 1] = { text = text, fn = fn }; return root end
         function root:CreateTitle(text) return root end
         function root:CreateDivider() return root end
-        function root:CreateCheckbox(text, ...) return root end
+        function root:CreateCheckbox(text, isSelected, fn)
+            log[#log + 1] = { text = text, fn = fn, checked = isSelected }
+            return root
+        end
         function root:CreateRadio(text, ...) return root end
         function root:SetScrollMode() end
         return root
@@ -599,6 +607,20 @@ function H.install(env)
     function H.triggerCallback(event, ...)
         for _, cb in ipairs(H.callbacks[event] or {}) do cb.fn(cb.owner, ...) end
     end
+    H.mutedSounds = {}
+    G.MuteSoundFile = function(id) H.mutedSounds[id] = true end
+    G.UnmuteSoundFile = function(id) H.mutedSounds[id] = nil end
+    H.errorsShown = {}
+    G.LE_GAME_ERR_SPELL_COOLDOWN, G.LE_GAME_ERR_ABILITY_COOLDOWN, G.LE_GAME_ERR_INV_FULL = 51, 52, 99
+    local errors = H.createFrame("MessageFrame", "UIErrorsFrame", G.UIParent)
+    errors:RegisterEvent("UI_ERROR_MESSAGE")
+    errors:SetScript("OnEvent", function(_, event, messageType, message)
+        H.errorsShown[#H.errorsShown + 1] = message
+    end)
+    H.now = 1000
+    G.GetTime = function() return H.now end
+    H.castIndex = {}
+    G.QueryCastSequence = function(sequence) return H.castIndex[sequence] or 1 end
     H.editMode = false
     G.EditModeManagerFrame = { IsEditModeActive = function() return H.editMode end }
     G.CreateCallbackRegistry = nil

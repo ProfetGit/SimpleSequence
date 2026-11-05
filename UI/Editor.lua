@@ -12,6 +12,7 @@ local TOP_HEIGHT = 92
 local ICON_CROP = 0.08
 local DOT = " \194\183 "
 local BADGE_H = 12
+local PAIR_ICON = 16
 local MENU_COLUMNS, MENU_ICON, MENU_GAP = 6, 32, 4
 
 local TILE_HINT_STEP = "Click for options" .. DOT .. "Right-click to remove" .. DOT .. "Drag to move"
@@ -457,6 +458,10 @@ end
 local function showTileTooltip(tile)
     if SS.DragDrop:IsDragging() or not tile.entry then return end
     local hint = tile.section and tile.section.def.extras and TILE_HINT_EXTRA or TILE_HINT_STEP
+    if tile.pairBuff then
+        local buffName = entryName(tile.pairBuff) or "its buff"
+        hint = buffName .. " is cast first and recast each time this uses it up." .. DOT .. hint
+    end
     SS.SpellSidebar:ShowTooltip(tile, tile.entry, hint, "ANCHOR_RIGHT")
 end
 
@@ -512,6 +517,11 @@ local function createTile()
     tile.everyBg:SetHeight(BADGE_H)
     tile.every = Theme:Text(tile, "", "small", "TEXT_WARNING")
     tile.every:SetPoint("TOPRIGHT", -3, -2)
+    tile.pairIcon = tile:CreateTexture(nil, "OVERLAY", nil, 3)
+    tile.pairIcon:SetSize(PAIR_ICON, PAIR_ICON)
+    tile.pairIcon:SetPoint("TOPLEFT", 1, -1)
+    tile.pairIcon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    tile.pairIcon:Hide()
 
     tile.hoverTex = Theme:Texture(tile, "listHover", "OVERLAY")
     tile.hoverTex:SetAllPoints()
@@ -731,6 +741,22 @@ local function buildSection(child, def)
     sec.bar:SetSize(3, TILE)
     sec.bar:Hide()
 
+    if def.key == "loop" then
+        sec.waitEach = Theme:Checkbox(sec, 300, "Wait for each spell, so mashing the key is safe", function(box)
+            if Editor.id then
+                database():SetFlag(Editor.id, "spamProof", box:GetChecked() == true)
+            end
+        end)
+        sec.waitEach:HookScript("OnEnter", function(widget)
+            GameTooltip:SetOwner(widget, "ANCHOR_RIGHT")
+            GameTooltip:AddLine("Wait for each spell", 1, 1, 1)
+            local r, g, b = unpack(Theme.colors.TEXT_MUTED)
+            GameTooltip:AddLine("The Loop only moves on when a spell actually casts, so pressing early or mashing "
+                .. "the key never skips a spell. Cast on and Hold-key options don't apply in the Loop then.", r, g, b, true)
+            GameTooltip:Show()
+        end)
+        sec.waitEach:HookScript("OnLeave", function() GameTooltip:Hide() end)
+    end
     if def.extras then
         sec.startAttack = Theme:Checkbox(sec, 300, "Start auto-attack", function(box)
             if Editor.id then
@@ -793,6 +819,10 @@ local function setupTile(sec, index, item, number)
         tile.num:Hide()
         tile.numBg:Hide()
     end
+    tile.pairBuff = sec.def.extras and item.buff or nil
+    local pairTexture = tile.pairBuff and entryIcon(tile.pairBuff)
+    tile.pairIcon:SetTexture(pairTexture)
+    tile.pairIcon:SetShown(pairTexture ~= nil)
     if sec.def.extras then
         tile.target:SetText("")
         tile.mods:SetText("")
@@ -832,6 +862,13 @@ local function layoutSection(sec, seq, width, base)
     sec:SetWidth(width)
     sec.grid:SetSize(width, gridHeight)
     local body = gridHeight
+    if sec.waitEach then
+        sec.waitEach:ClearAllPoints()
+        sec.waitEach:SetPoint("TOPLEFT", sec, "TOPLEFT", 0, sec.top - gridHeight - 12)
+        sec.waitEach.label:SetWidth(math.max(60, width - 34))
+        sec.waitEach:SetChecked(seq.spamProof == true)
+        body = body + 12 + Theme.checkboxSize
+    end
     if sec.startAttack then
         sec.startAttack:ClearAllPoints()
         sec.startAttack:SetPoint("TOPLEFT", sec, "TOPLEFT", 0, sec.top - gridHeight - 12)

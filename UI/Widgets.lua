@@ -263,7 +263,11 @@ function Widgets:ContextMenu(owner, items)
     if MenuUtil and MenuUtil.CreateContextMenu then
         local ok = pcall(MenuUtil.CreateContextMenu, owner, function(_, root)
             for _, item in ipairs(items) do
-                root:CreateButton(item.text, item.fn)
+                if item.checked then
+                    root:CreateCheckbox(item.text, function() return item.checked() == true end, item.fn)
+                else
+                    root:CreateButton(item.text, item.fn)
+                end
             end
         end)
         if ok then return end
@@ -281,7 +285,9 @@ function Widgets:ContextMenu(owner, items)
         end
         row:ClearAllPoints()
         row:SetPoint("TOPLEFT", 4, -4 - (index - 1) * MENU_ROW)
-        row.label:SetText(item.text)
+        local text = item.text
+        if item.checked then text = (item.checked() and "[x] " or "[  ] ") .. text end
+        row.label:SetText(text)
         row.action = item.fn
         row:Show()
     end

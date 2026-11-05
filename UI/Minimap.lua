@@ -58,11 +58,8 @@ local function showTooltip(widget)
 end
 
 local function showMenu(owner)
-    SS.Widgets:ContextMenu(owner, {
+    SS.Widgets:ContextMenu(owner, SS.Settings and SS.Settings:MenuItems() or {
         { text = "Hide minimap button", fn = function() MinimapButton:SetHidden(true) end },
-        { text = "Show or hide next-up icon", fn = function()
-            if SS.NextUp then SS.NextUp:Toggle() end
-        end },
     })
 end
 

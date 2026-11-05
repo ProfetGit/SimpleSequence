@@ -74,11 +74,19 @@ function Commands.minimap()
     end
 end
 
+function Commands.mute()
+    if SS.Settings then SS.Settings:ToggleMashSilenced() end
+end
+
 function Commands.debug()
     local id = requireSelected()
     if not id then return end
     for _, line in ipairs(SS.Engine:DebugLines(id)) do
         SS:Print(line)
+    end
+    if SS.Settings and SS.Settings:IsMashSilenced() then
+        local messages = SS.Settings:SilencedMessages()
+        SS:Print("Errors silenced lately: " .. (#messages > 0 and table.concat(messages, " | ") or "none"))
     end
 end
 
@@ -91,10 +99,11 @@ function Commands.help()
     print("  /seq import - paste a shared sequence")
     print("  /seq nextup - show or hide the next-spell icon")
     print("  /seq minimap - show or hide the minimap button")
+    print("  /seq mute - silence or bring back \"not ready yet\" errors")
     print("  /seq debug - show what the selected sequence will cast")
 end
 
-local SUBCOMMANDS = { demo = true, reset = true, export = true, import = true, nextup = true, minimap = true, debug = true, help = true }
+local SUBCOMMANDS = { demo = true, reset = true, export = true, import = true, nextup = true, minimap = true, mute = true, debug = true, help = true }
 
 SLASH_SIMPLESEQUENCE1 = "/seq"
 SLASH_SIMPLESEQUENCE2 = "/simplesequence"
