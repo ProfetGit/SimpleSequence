@@ -160,6 +160,29 @@ step("scrollbar drag follows the mouse", function()
     expect("release ends the drag", thumb.__scripts.OnUpdate == nil)
     _G.GetCursorPosition = realCursor
 end)
+step("Edit Mode moves the next-press icon", function()
+    local nextUp = _G.SimpleSequenceNextUp
+    expect("next-up frame exists", nextUp ~= nil)
+    local savedLast = SS.Engine.lastPressed
+    SS.Engine.lastPressed = nil
+    SS.NextUp:Refresh()
+    expect("hidden before anything is pressed", not nextUp:IsShown())
+    H.triggerCallback("EditMode.Enter")
+    expect("editing flag set", SS.NextUp:IsEditing())
+    expect("shown in Edit Mode", nextUp:IsShown())
+    local selection = nextUp.selection
+    expect("selection shown", selection and selection:IsShown())
+    selection.__scripts.OnDragStart(selection)
+    selection.__scripts.OnDragStop(selection)
+    expect("position saved", type(SS.db.nextUp.point) == "table")
+    selection.__scripts.OnMouseUp(selection, "RightButton")
+    H.triggerCallback("EditMode.Exit")
+    expect("editing cleared", not SS.NextUp:IsEditing())
+    expect("selection hidden", not selection:IsShown())
+    expect("hidden again after Edit Mode", not nextUp:IsShown())
+    SS.Engine.lastPressed = savedLast
+    SS.NextUp:Refresh()
+end)
 step("key capture does not stay armed", function()
     local kb = SS.Editor.keyButton
     local function armed() return (kb.label:GetText() or ""):find("Press a key", 1, true) ~= nil end

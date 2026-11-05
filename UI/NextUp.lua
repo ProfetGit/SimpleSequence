@@ -16,6 +16,8 @@ local VALID_POINTS = {
 }
 
 local frame
+local editing = false
+local EDIT_LABEL = "Next press"
 
 local function settings()
     return SS.db and SS.db.nextUp
@@ -161,6 +163,7 @@ local function showTooltip(widget)
     local seq = SS.Database:GetSequence(id)
     local r, g, b = unpack(Theme.colors.TEXT_MUTED)
     GameTooltip:AddLine("Next press of " .. (seq and seq.name or "your sequence"), r, g, b)
+    GameTooltip:AddLine("Move it in Edit Mode, or Shift-drag it. Right-click for options.", r, g, b, true)
     GameTooltip:Show()
 end
 
@@ -205,13 +208,36 @@ local function build()
         widget:StopMovingOrSizing()
         savePoint()
     end)
-    frame:SetScript("OnClick", function(widget, button)
-        if button ~= "RightButton" then return end
-        Widgets:ContextMenu(widget, {
+    local function showMenu(owner)
+        Widgets:ContextMenu(owner, {
             { text = "Hide", fn = hideForGood },
             { text = "Bigger", fn = function() setScale(SCALE_STEP) end },
             { text = "Smaller", fn = function() setScale(-SCALE_STEP) end },
         })
+    end
+    frame:SetScript("OnClick", function(widget, button)
+        if button == "RightButton" then showMenu(widget) end
+    end)
+
+    local selection = Theme:EditModeSelection(frame, EDIT_LABEL)
+    frame.selection = selection
+    selection.label:ClearAllPoints()
+    selection.label:SetPoint("BOTTOM", selection, "TOP", 0, 6)
+    selection:SetScript("OnEnter", function(widget) widget:SetSelected(true) end)
+    selection:SetScript("OnLeave", function(widget) widget:SetSelected(widget.dragging == true) end)
+    selection:SetScript("OnDragStart", function(widget)
+        widget.dragging = true
+        widget:SetSelected(true)
+        frame:StartMoving()
+    end)
+    selection:SetScript("OnDragStop", function(widget)
+        widget.dragging = nil
+        frame:StopMovingOrSizing()
+        savePoint()
+        widget:SetSelected(widget:IsMouseOver())
+    end)
+    selection:SetScript("OnMouseUp", function(widget, button)
+        if button == "RightButton" then showMenu(widget) end
     end)
     frame:SetScript("OnEnter", showTooltip)
     frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -220,10 +246,27 @@ local function build()
     frame:Hide()
 end
 
+local function previewEntry()
+    local id = SS.Database:GetSelected(SS.currentSpec)
+    local seq = id and SS.Database:GetSequence(id)
+    local step = seq and ((seq.opener and seq.opener[1]) or (seq.loop and seq.loop[1]))
+    return step and step.entry
+end
+
 function NextUp:Refresh()
     if not frame then return end
     local data = settings()
     local id = currentId()
+    if editing and data and data.shown ~= false and not (id and SS.Database:GetSequence(id)) then
+        local entry = previewEntry()
+        frame.icon:SetTexture((entry and SS.Compiler.EntryIcon(entry)) or Theme.icons.app)
+        frame.entry = entry
+        frame.counter:SetText("")
+        updateCooldown()
+        updateTint()
+        frame:Show()
+        return
+    end
     if not data or data.shown == false or not id or not SS.Database:GetSequence(id) then
         frame:Hide()
         return
@@ -265,7 +308,29 @@ function NextUp:Toggle()
     end
 end
 
-SS:On("LOGIN", function() NextUp:Init() end)
+function NextUp:SetEditing(on)
+    editing = on == true
+    if not frame then return end
+    frame.selection.dragging = nil
+    frame.selection:SetSelected(false)
+    frame.selection:SetShown(editing)
+    if not editing then frame:StopMovingOrSizing() end
+    self:Refresh()
+end
+
+function NextUp:IsEditing()
+    return editing
+end
+
+SS:On("LOGIN", function()
+    NextUp:Init()
+    if EventRegistry and EventRegistry.RegisterCallback then
+        EventRegistry:RegisterCallback("EditMode.Enter", function() NextUp:SetEditing(true) end, NextUp)
+        EventRegistry:RegisterCallback("EditMode.Exit", function() NextUp:SetEditing(false) end, NextUp)
+    end
+    local manager = EditModeManagerFrame
+    if manager and manager.IsEditModeActive and manager:IsEditModeActive() then NextUp:SetEditing(true) end
+end)
 SS:On("SEQUENCE_PRESSED", function() NextUp:Refresh() end)
 SS:On("SEQUENCE_ADVANCED", function(id)
     if id == currentId() and frame and frame:IsShown() then NextUp:Refresh() end

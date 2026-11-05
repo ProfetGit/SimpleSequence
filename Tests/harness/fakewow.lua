@@ -589,6 +589,18 @@ function H.install(env)
         end,
     }
     G.Menu = { PopupMenu = G.MenuUtil.CreateContextMenu }
+    H.callbacks = {}
+    G.EventRegistry = {
+        RegisterCallback = function(_, event, fn, owner)
+            H.callbacks[event] = H.callbacks[event] or {}
+            table.insert(H.callbacks[event], { fn = fn, owner = owner })
+        end,
+    }
+    function H.triggerCallback(event, ...)
+        for _, cb in ipairs(H.callbacks[event] or {}) do cb.fn(cb.owner, ...) end
+    end
+    H.editMode = false
+    G.EditModeManagerFrame = { IsEditModeActive = function() return H.editMode end }
     G.CreateCallbackRegistry = nil
     G.ColorPickerFrame = H.newProxy("Frame", "ColorPickerFrame")
     G.GameFontNormal = H.newProxy("Font", "GameFontNormal")
